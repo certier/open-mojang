@@ -3,32 +3,37 @@ package com.openmojang.launcher.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * type: "release" | "beta" | "patch"
+ * cover: art key used for the colored banner on version cards
+ */
 data class McVersion(
     val id: String,
     val name: String,
-    /** Full Android version string when known, e.g. 1.26.52.3 */
     val patch: String,
     val type: String,
     val date: String,
     val sizeMb: Int,
     val changelog: String,
-    val downloadUrl: String
+    val downloadUrl: String,
+    val cover: String = "default"
 ) {
-    /** Short label for chips / lists */
     val displayName: String get() = if (patch.isNotBlank()) patch else name
 
-    /** True if this build is a patch on a major drop (x.y.z.w with w > 0 or trailing hotfix). */
-    val isPatch: Boolean
-        get() {
-            val parts = patch.removePrefix("1.").split('.')
-            return parts.size >= 4 || (parts.size == 3 && parts.getOrNull(2)?.toIntOrNull()?.let { it in 1..49 } == true)
+    val isPatch: Boolean get() = type == "patch"
+
+    val typeLabel: String
+        get() = when (type) {
+            "beta" -> "Beta"
+            "patch" -> "Minecraft Patch"
+            else -> "Release"
         }
 }
 
 class VersionRepository {
 
     private val catalog = listOf(
-        // --- Beta / Preview line ---
+        // --- Beta ---
         McVersion(
             id = "26.70.20",
             name = "1.26.70.20",
@@ -37,7 +42,8 @@ class VersionRepository {
             date = "13 Oct 2026",
             sizeMb = 520,
             changelog = ChangelogProvider.forVersion("26.70.20"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-70-20-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-70-20-apk/",
+            cover = "ice"
         ),
         McVersion(
             id = "26.60.30",
@@ -47,7 +53,8 @@ class VersionRepository {
             date = "6 Oct 2026",
             sizeMb = 515,
             changelog = ChangelogProvider.forVersion("26.60.30"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-30-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-30-apk/",
+            cover = "ice"
         ),
         McVersion(
             id = "26.60.29",
@@ -57,7 +64,8 @@ class VersionRepository {
             date = "30 Sep 2026",
             sizeMb = 550,
             changelog = ChangelogProvider.forVersion("26.60.29"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-29-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-29-apk/",
+            cover = "ice"
         ),
         McVersion(
             id = "26.60.28",
@@ -67,7 +75,8 @@ class VersionRepository {
             date = "22 Sep 2026",
             sizeMb = 510,
             changelog = ChangelogProvider.forVersion("26.60.28"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-28-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-28-apk/",
+            cover = "ice"
         ),
         McVersion(
             id = "26.60.24",
@@ -77,29 +86,44 @@ class VersionRepository {
             date = "Sep 2026",
             sizeMb = 505,
             changelog = ChangelogProvider.forVersion("26.60.24"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-24-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-24-apk/",
+            cover = "ice"
         ),
-        // --- Stable release line ---
+        // --- Minecraft Patch (hotfixes) ---
         McVersion(
             id = "26.52",
             name = "1.26.52",
             patch = "1.26.52.3",
-            type = "release",
+            type = "patch",
             date = "28 Sep 2026",
             sizeMb = 370,
             changelog = ChangelogProvider.forVersion("26.52"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-52-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-52-apk/",
+            cover = "patch"
         ),
         McVersion(
             id = "26.51",
             name = "1.26.51",
             patch = "1.26.51.01",
-            type = "release",
+            type = "patch",
             date = "22 Sep 2026",
             sizeMb = 508,
             changelog = ChangelogProvider.forVersion("26.51"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-51-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-51-apk/",
+            cover = "patch"
         ),
+        McVersion(
+            id = "26.45",
+            name = "1.26.45",
+            patch = "1.26.45",
+            type = "patch",
+            date = "29 Aug 2026",
+            sizeMb = 500,
+            changelog = ChangelogProvider.forVersion("26.45"),
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-45-apk/",
+            cover = "patch"
+        ),
+        // --- Full releases ---
         McVersion(
             id = "26.50",
             name = "1.26.50",
@@ -108,17 +132,8 @@ class VersionRepository {
             date = "15 Sep 2026",
             sizeMb = 505,
             changelog = ChangelogProvider.forVersion("26.50"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-50-apk/"
-        ),
-        McVersion(
-            id = "26.45",
-            name = "1.26.45",
-            patch = "1.26.45",
-            type = "release",
-            date = "29 Aug 2026",
-            sizeMb = 500,
-            changelog = ChangelogProvider.forVersion("26.45"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-45-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-50-apk/",
+            cover = "forest"
         ),
         McVersion(
             id = "26.30",
@@ -128,7 +143,8 @@ class VersionRepository {
             date = "2026",
             sizeMb = 490,
             changelog = ChangelogProvider.forVersion("26.30"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-30-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-30-apk/",
+            cover = "sulfur"
         ),
         McVersion(
             id = "26.10",
@@ -138,7 +154,8 @@ class VersionRepository {
             date = "Mar 2026",
             sizeMb = 480,
             changelog = ChangelogProvider.forVersion("26.10"),
-            downloadUrl = "https://mcpedl.org/minecraft-pe-26-10-apk/"
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-10-apk/",
+            cover = "grass"
         )
     )
 
@@ -166,6 +183,12 @@ class VersionRepository {
         return list.distinct()
     }
 
-    fun latestStable(): McVersion? = catalog.firstOrNull { it.type == "release" }
+    /** Latest playable stable: prefer newest patch, else full release. */
+    fun latestStable(): McVersion? =
+        catalog.firstOrNull { it.type == "patch" }
+            ?: catalog.firstOrNull { it.type == "release" }
+
     fun latestBeta(): McVersion? = catalog.firstOrNull { it.type == "beta" }
+
+    fun latestPatch(): McVersion? = catalog.firstOrNull { it.type == "patch" }
 }
