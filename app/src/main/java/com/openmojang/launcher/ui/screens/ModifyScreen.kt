@@ -2,7 +2,6 @@ package com.openmojang.launcher.ui.screens
 
 import android.content.Intent
 import android.net.Uri
-import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -12,7 +11,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,21 +35,31 @@ fun ModifyScreen() {
     var message by remember { mutableStateOf<String?>(null) }
     var api by remember { mutableStateOf(GraphicsApi.DEFAULT) }
     var viewDistance by remember { mutableFloatStateOf(192f) }
+    var fov by remember { mutableFloatStateOf(60f) }
+    var gamma by remember { mutableFloatStateOf(0.5f) }
     var fancy by remember { mutableStateOf(true) }
     var smooth by remember { mutableStateOf(true) }
     var skies by remember { mutableStateOf(true) }
+    var bobbing by remember { mutableStateOf(true) }
+    var asyncTex by remember { mutableStateOf(true) }
     var msaa by remember { mutableIntStateOf(2) }
     var maxFps by remember { mutableIntStateOf(0) }
     var vsync by remember { mutableStateOf(false) }
     var multiThread by remember { mutableStateOf(true) }
+    var forceStopFirst by remember { mutableStateOf(true) }
+    val vulkanLabel = remember { editor.vulkanLevelLabel() }
 
     fun applyMap(map: Map<String, String>) {
         options = map
         api = editor.graphicsApiOf(map)
         viewDistance = map["gfx_viewdistance"]?.toFloatOrNull() ?: 192f
+        fov = map["gfx_field_of_view"]?.toFloatOrNull() ?: 60f
+        gamma = map["gfx_gamma"]?.toFloatOrNull() ?: 0.5f
         fancy = map["gfx_fancygraphics"] != "0"
         smooth = map["gfx_smoothlighting"] != "0"
         skies = map["gfx_fancyskies"] != "0"
+        bobbing = map["gfx_viewbobbing"] != "0"
+        asyncTex = map["gfx_async_texture_loads"] != "0"
         msaa = map["gfx_msaa"]?.toIntOrNull() ?: 2
         maxFps = map["gfx_max_framerate"]?.toIntOrNull() ?: 0
         vsync = map["gfx_vsync"] == "1"
@@ -74,9 +82,13 @@ fun ModifyScreen() {
     fun buildOptions(): Map<String, String> {
         val m = options.toMutableMap()
         m["gfx_viewdistance"] = viewDistance.toInt().coerceIn(48, 512).toString()
+        m["gfx_field_of_view"] = fov.toInt().coerceIn(30, 110).toString()
+        m["gfx_gamma"] = "%.2f".format(gamma.coerceIn(0f, 1f))
         m["gfx_fancygraphics"] = if (fancy) "1" else "0"
         m["gfx_smoothlighting"] = if (smooth) "1" else "0"
         m["gfx_fancyskies"] = if (skies) "1" else "0"
+        m["gfx_viewbobbing"] = if (bobbing) "1" else "0"
+        m["gfx_async_texture_loads"] = if (asyncTex) "1" else "0"
         m["gfx_msaa"] = msaa.toString()
         m["gfx_max_framerate"] = maxFps.toString()
         m["gfx_vsync"] = if (vsync) "1" else "0"
@@ -129,7 +141,7 @@ fun ModifyScreen() {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                "Edits Minecraft Bedrock options.txt — the same file the game reads for graphics.",
+                "Real options.txt edits — same keys Minecraft Bedrock stores.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -140,32 +152,52 @@ fun ModifyScreen() {
                     Text(sourceLabel, style = MaterialTheme.typography.bodySmall)
                     val ver = installed.systemMinecraftVersion()
                     Text(
-                        if (ver != null) "Minecraft installed · $ver" else "Minecraft not installed",
+                        if (ver != null) "Minecraft · $ver" else "Minecraft not installed",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        vulkanLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { reload() }) { Text("Reload") }
                         TextButton(onClick = {
                             openDoc.launch(OptionsEditor.optionsMimeTypes())
-                        }) { Text("Pick options.txt") }
+                        }) { Text("Pick file") }
                     }
                 }
             }
 
             Text("Presets", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 AssistChip(
-                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.PERFORMANCE)) },
-                    label = { Text("Performance") }
+                    onClick = {
+                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.PERFORMANCE))
+                    },
+                    label = { Text("Perf") }
                 )
                 AssistChip(
-                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.BALANCED)) },
+                    onClick = {
+                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.BALANCED))
+                    },
                     label = { Text("Balanced") }
                 )
                 AssistChip(
-                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.QUALITY)) },
+                    onClick = {
+                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.QUALITY))
+                    },
                     label = { Text("Quality") }
+                )
+                AssistChip(
+                    onClick = {
+                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.FULLBRIGHT))
+                    },
+                    label = { Text("Bright") }
                 )
             }
 
@@ -173,7 +205,7 @@ fun ModifyScreen() {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Graphics API", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Writes preferred backend keys into options.txt. The game only honors them on builds that support the setting.",
+                        "Writes backend preference keys. Device: $vulkanLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -193,7 +225,7 @@ fun ModifyScreen() {
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 when (option) {
-                                    GraphicsApi.DEFAULT -> "Default (game chooses)"
+                                    GraphicsApi.DEFAULT -> "Default"
                                     GraphicsApi.OPENGLES -> "Prefer OpenGL ES"
                                     GraphicsApi.VULKAN -> "Prefer Vulkan"
                                 }
@@ -213,6 +245,19 @@ fun ModifyScreen() {
                         valueRange = 48f..512f,
                         steps = 14
                     )
+                    Text("FOV: ${fov.toInt()}°")
+                    Slider(
+                        value = fov,
+                        onValueChange = { fov = it },
+                        valueRange = 30f..110f,
+                        steps = 15
+                    )
+                    Text("Gamma: ${"%.2f".format(gamma)}")
+                    Slider(
+                        value = gamma,
+                        onValueChange = { gamma = it },
+                        valueRange = 0f..1f
+                    )
                     Text("MSAA: ${msaa}x")
                     Slider(
                         value = msaa.toFloat(),
@@ -230,13 +275,42 @@ fun ModifyScreen() {
                     SwitchRow("Fancy graphics", fancy) { fancy = it }
                     SwitchRow("Smooth lighting", smooth) { smooth = it }
                     SwitchRow("Fancy skies", skies) { skies = it }
+                    SwitchRow("View bobbing", bobbing) { bobbing = it }
+                    SwitchRow("Async textures", asyncTex) { asyncTex = it }
                     SwitchRow("VSync", vsync) { vsync = it }
                     SwitchRow("Multithreaded renderer", multiThread) { multiThread = it }
                 }
             }
 
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Apply tools", style = MaterialTheme.typography.titleSmall)
+                    SwitchRow("Force-stop Minecraft first", forceStopFirst) { forceStopFirst = it }
+                    Text(
+                        "Stops the game so it cannot overwrite options.txt when it exits.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            val ok = editor.forceStopMinecraft()
+                            message = if (ok) "Minecraft process stop requested" else "Could not stop process"
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Force-stop Minecraft now") }
+                    OutlinedButton(
+                        onClick = {
+                            val path = editor.backup(buildOptions())
+                            message = if (path != null) "Backup: $path" else "Backup failed"
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Backup options.txt") }
+                }
+            }
+
             Button(
                 onClick = {
+                    if (forceStopFirst) editor.forceStopMinecraft()
                     val built = buildOptions()
                     options = built
                     val result = editor.saveBest(built)
@@ -262,7 +336,7 @@ fun ModifyScreen() {
             }
 
             Text(
-                "Close Minecraft before applying. On Android 11+ use Pick options.txt if auto-detect fails (Android/data is blocked).",
+                "Close or force-stop Minecraft before Apply. On Android 11+ use Pick file if auto-detect fails.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
