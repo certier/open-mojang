@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 class DownloadService : Service() {
@@ -31,6 +32,7 @@ class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
     private var activeFileName: String? = null
+    private var activeVersionId: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -39,6 +41,8 @@ class DownloadService : Service() {
             job?.cancel()
             deletePartials(activeFileName)
             DownloadEngine(applicationContext).purgeIncomplete()
+            running.set(false)
+            activeVersionId = null
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -52,7 +56,19 @@ class DownloadService : Service() {
         val sizeMb = intent.getIntExtra(EXTRA_SIZE_MB, 0)
         val fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: "minecraft-$versionId.apk"
         val urls = intent.getStringArrayExtra(EXTRA_URLS)?.toList().orEmpty()
+
+        // User double-tapped Get while another download runs
+        if (running.get() && activeVersionId != null && activeVersionId != versionId) {
+            broadcastError(versionId, "Another download is already running. Cancel it first.")
+            return START_NOT_STICKY
+        }
+        if (running.get() && activeVersionId == versionId) {
+            // same version — ignore duplicate start
+            return START_NOT_STICKY
+        }
+
         activeFileName = fileName
+        activeVersionId = versionId
 
         if (urls.isEmpty()) {
             broadcastError(versionId, "No download URLs")
@@ -61,7 +77,7 @@ class DownloadService : Service() {
         }
 
         ensureChannel()
-        val notification = buildNotification(versionName, 0, 0, 0, indeterminate = true)
+        val notification = buildNotification(versionName, 0, 0, 0, 0, indeterminate = true)
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 NOTIF_ID,
@@ -73,35 +89,43 @@ class DownloadService : Service() {
         }
 
         job?.cancel()
+        running.set(true)
         job = scope.launch {
             val engine = DownloadEngine(applicationContext)
             val settings = SettingsStore(applicationContext)
             engine.purgeIncomplete()
             try {
-                broadcastProgress(versionId, DownloadProgress(0f, 0, 0), versionName)
-                val file = engine.downloadFirst(urls, fileName) { p ->
-                    updateNotification(versionName, p)
-                    broadcastProgress(versionId, p, versionName)
+                engine.preflightError(sizeMb)?.let { throw IllegalStateException(it) }
+
+                // Use existing good file if present
+                engine.cached(fileName)?.let { file ->
+                    completeNotification(versionName, file.length(), success = true)
+                    broadcastComplete(versionId, file.absolutePath, file.length())
+                    if (settings.installAfterDownload) engine.installApk(file)
+                    return@launch
                 }
 
-                if (sizeMb > 0) {
-                    val expected = sizeMb * 1024L * 1024L
-                    val actual = file.length()
-                    val minOk = (expected * 0.70).toLong()
-                    val maxOk = (expected * 1.25).toLong()
-                    if (actual < minOk || actual > maxOk) {
-                        file.delete()
-                        throw IllegalStateException(
-                            "Size mismatch: got ${mb(actual)} MB, catalog says ~$sizeMb MB"
-                        )
-                    }
+                broadcastProgress(versionId, DownloadProgress(0f, 0, 0), versionName)
+                val file = engine.downloadFirst(urls, fileName, sizeMb) { p ->
+                    updateNotification(versionName, p)
+                    broadcastProgress(versionId, p, versionName)
                 }
 
                 completeNotification(versionName, file.length(), success = true)
                 broadcastComplete(versionId, file.absolutePath, file.length())
 
                 if (settings.installAfterDownload) {
-                    engine.installApk(file)
+                    try {
+                        engine.installApk(file)
+                    } catch (ie: Exception) {
+                        // download ok; install is separate failure
+                        completeNotification(
+                            versionName,
+                            file.length(),
+                            success = true,
+                            message = "Downloaded · install failed: ${ie.message}"
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 deletePartials(fileName)
@@ -111,9 +135,12 @@ class DownloadService : Service() {
             } catch (e: Exception) {
                 deletePartials(fileName)
                 engine.purgeIncomplete()
-                completeNotification(versionName, 0, success = false, message = e.message)
-                broadcastError(versionId, e.message ?: "Download failed")
+                val msg = e.message ?: "Download failed"
+                completeNotification(versionName, 0, success = false, message = msg)
+                broadcastError(versionId, msg)
             } finally {
+                running.set(false)
+                activeVersionId = null
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf()
             }
@@ -127,12 +154,12 @@ class DownloadService : Service() {
         val dir = File(applicationContext.getExternalFilesDir(null), "Download")
         File(dir, "$fileName.part").delete()
         val final = File(dir, fileName)
-        // only delete final if it is clearly incomplete (tiny)
         if (final.exists() && final.length() < 5_000_000L) final.delete()
     }
 
     override fun onDestroy() {
         job?.cancel()
+        running.set(false)
         scope.cancel()
         super.onDestroy()
     }
@@ -172,16 +199,19 @@ class DownloadService : Service() {
         percent: Int,
         read: Long,
         total: Long,
+        speedBps: Long,
         indeterminate: Boolean
     ): Notification {
+        val speedText = if (speedBps > 0) " · ${formatSpeed(speedBps)}" else ""
         val text = when {
             indeterminate -> "Resolving APK…"
-            total > 0 -> "$percent% · ${mb(read)} / ${mb(total)} MB"
-            else -> "${mb(read)} MB"
+            total > 0 -> "$percent% · ${mb(read)} / ${mb(total)} MB$speedText"
+            else -> "${mb(read)} MB$speedText"
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Downloading Minecraft $versionName")
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -197,18 +227,16 @@ class DownloadService : Service() {
     }
 
     private fun updateNotification(versionName: String, p: DownloadProgress) {
-        val percent = if (p.bytesTotal > 0) {
-            (p.fraction * 100).roundToInt()
-        } else 0
+        val percent = if (p.bytesTotal > 0) (p.fraction * 100).roundToInt() else 0
         val n = buildNotification(
             versionName,
             percent,
             p.bytesRead,
             p.bytesTotal,
+            p.speedBps,
             indeterminate = p.bytesRead == 0L
         )
-        val mgr = getSystemService(NotificationManager::class.java)
-        mgr.notify(NOTIF_ID, n)
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, n)
     }
 
     private fun completeNotification(
@@ -219,12 +247,14 @@ class DownloadService : Service() {
     ) {
         val title = if (success) "Download complete" else "Download failed"
         val text = when {
+            message != null && success -> message
             success -> "Minecraft $versionName · ${mb(bytes)} MB"
             else -> message ?: "Failed"
         }
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(
                 if (success) android.R.drawable.stat_sys_download_done
                 else android.R.drawable.stat_notify_error
@@ -234,8 +264,7 @@ class DownloadService : Service() {
             .setContentIntent(openAppIntent())
             .setProgress(0, 0, false)
             .build()
-        val mgr = getSystemService(NotificationManager::class.java)
-        mgr.notify(NOTIF_ID + 1, n)
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1, n)
     }
 
     private fun broadcastProgress(versionId: String, p: DownloadProgress, name: String) {
@@ -246,6 +275,7 @@ class DownloadService : Service() {
                 putExtra(EXTRA_FRACTION, p.fraction)
                 putExtra(EXTRA_BYTES_READ, p.bytesRead)
                 putExtra(EXTRA_BYTES_TOTAL, p.bytesTotal)
+                putExtra(EXTRA_SPEED_BPS, p.speedBps)
             }
         )
     }
@@ -286,8 +316,13 @@ class DownloadService : Service() {
         const val EXTRA_FRACTION = "fraction"
         const val EXTRA_BYTES_READ = "bytes_read"
         const val EXTRA_BYTES_TOTAL = "bytes_total"
+        const val EXTRA_SPEED_BPS = "speed_bps"
         const val EXTRA_PATH = "path"
         const val EXTRA_MESSAGE = "message"
+
+        private val running = AtomicBoolean(false)
+
+        fun isRunning(): Boolean = running.get()
 
         fun start(
             context: Context,
@@ -308,5 +343,12 @@ class DownloadService : Service() {
 
         private fun mb(bytes: Long): String =
             if (bytes <= 0L) "0.0" else "%.1f".format(bytes / (1024.0 * 1024.0))
+
+        private fun formatSpeed(bps: Long): String {
+            if (bps <= 0) return ""
+            val kb = bps / 1024.0
+            return if (kb >= 1024) "%.1f MB/s".format(kb / 1024.0)
+            else "%.0f KB/s".format(kb)
+        }
     }
 }
