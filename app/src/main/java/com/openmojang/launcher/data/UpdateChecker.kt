@@ -30,7 +30,6 @@ class UpdateChecker(
         val system = installed.systemMinecraftVersion()
         val match = repo.findByInstalled(system)
 
-        // Only offer update when catalog has something strictly newer than installed
         val candidate = newest
         val updateAvailable = when {
             system == null && candidate != null -> true
@@ -51,20 +50,23 @@ class UpdateChecker(
     }
 
     companion object {
-        /** Numeric key so 1.26.70.20 > 1.26.50 */
-        fun versionKey(raw: String): List<Int> =
-            Regex("\\d+").findAll(raw).map { it.value.toIntOrNull() ?: 0 }.toList()
-
-        fun compareVersionStrings(a: String, b: String): Int {
-            val pa = versionKey(a)
-            val pb = versionKey(b)
-            val n = maxOf(pa.size, pb.size)
-            for (i in 0 until n) {
-                val x = pa.getOrElse(i) { 0 }
-                val y = pb.getOrElse(i) { 0 }
-                if (x != y) return x.compareTo(y)
+        /**
+         * Pack version digits into a Long so compareBy works.
+         * 1.26.70.20 -> higher than 1.26.50
+         */
+        fun versionKey(raw: String?): Long {
+            if (raw.isNullOrBlank()) return 0L
+            val parts = Regex("\\d+").findAll(raw).map { it.value.toLongOrNull() ?: 0L }.toList()
+            var key = 0L
+            // major.minor.patch.revision — 4 slots of 1000
+            for (i in 0 until 4) {
+                val n = parts.getOrElse(i) { 0L }.coerceIn(0L, 999L)
+                key = key * 1000L + n
             }
-            return 0
+            return key
         }
+
+        fun compareVersionStrings(a: String?, b: String?): Int =
+            versionKey(a).compareTo(versionKey(b))
     }
 }

@@ -112,10 +112,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 } else ""
                             installed.track(
                                 InstalledBuild(
-                                    versionId = id,
-                                    fileName = File(path).name,
-                                    path = path,
-                                    bytes = File(path).length(),
+                                    id = id,
+                                    name = sheetVersion?.displayName ?: id,
+                                    packageName = "com.mojang.minecraftpe",
+                                    apkPath = path,
                                     installedAt = System.currentTimeMillis()
                                 )
                             )
