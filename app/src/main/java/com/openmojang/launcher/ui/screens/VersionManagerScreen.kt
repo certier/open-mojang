@@ -106,13 +106,12 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         statusLine = "Done · ${mb(bytes)} MB" +
                             if (settings.installAfterDownload) " · install started" else ""
                         progress = DownloadProgress(1f, bytes, bytes)
-                        // Track for history
                         val v = sheetVersion
                         if (v != null && path != null) {
                             installed.track(
                                 InstalledBuild(
                                     id = v.id,
-                                    name = v.name,
+                                    name = v.displayName,
                                     packageName = "com.mojang.minecraftpe",
                                     apkPath = path,
                                     installedAt = System.currentTimeMillis()
@@ -153,6 +152,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         val q = query.trim()
         val queryOk = q.isEmpty() ||
             v.name.contains(q, ignoreCase = true) ||
+            v.patch.contains(q, ignoreCase = true) ||
             v.id.contains(q, ignoreCase = true) ||
             v.changelog.contains(q, ignoreCase = true)
         typeOk && queryOk
@@ -172,10 +172,18 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            systemVer?.let {
+            systemVer?.let { ver ->
+                val match = repo.findByInstalled(ver)
                 ListItem(
                     headlineContent = { Text("Installed") },
-                    supportingContent = { Text(it) },
+                    supportingContent = {
+                        Text(
+                            buildString {
+                                append(ver)
+                                if (match != null) append(" · catalog ${match.displayName}")
+                            }
+                        )
+                    },
                     trailingContent = {
                         TextButton(onClick = { installed.launchSystemMinecraft() }) { Text("Open") }
                     }
@@ -199,7 +207,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 singleLine = true,
                 label = { Text("Search") },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("1.26.52, beta, spectator…") }
+                placeholder = { Text("1.26.52.3, beta, ice caves…") }
             )
             Row(
                 Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -213,14 +221,14 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 items(shown, key = { it.id }) { v ->
                     val cached = engine.cached("minecraft-${v.id}.apk")
                     ListItem(
-                        headlineContent = { Text(v.name) },
+                        headlineContent = { Text(v.displayName) },
                         supportingContent = {
                             Text(
                                 buildString {
-                                    append("${v.type} · ${v.date} · ~${v.sizeMb} MB")
-                                    if (cached != null) {
-                                        append(" · saved ${mb(cached.length())} MB")
-                                    }
+                                    append("${v.type}")
+                                    if (v.isPatch) append(" · patch")
+                                    append(" · ${v.date} · ~${v.sizeMb} MB")
+                                    if (cached != null) append(" · saved ${mb(cached.length())} MB")
                                 }
                             )
                         },
@@ -253,10 +261,15 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     .padding(bottom = 32.dp)
                     .navigationBarsPadding()
             ) {
-                Text(target.name, style = MaterialTheme.typography.headlineSmall)
+                Text(target.displayName, style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "${target.type} · ${target.date} · catalog ~${target.sizeMb} MB",
+                    buildString {
+                        append(target.type)
+                        if (target.isPatch) append(" · patch")
+                        append(" · ${target.date} · ~${target.sizeMb} MB")
+                        if (target.patch != target.name) append(" · id ${target.id}")
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -336,7 +349,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             DownloadService.start(
                                 context = context,
                                 versionId = target.id,
-                                versionName = target.name,
+                                versionName = target.displayName,
                                 sizeMb = target.sizeMb,
                                 urls = urls
                             )
