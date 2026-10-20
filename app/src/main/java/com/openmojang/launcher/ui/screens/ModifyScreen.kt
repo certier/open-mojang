@@ -1,0 +1,285 @@
+package com.openmojang.launcher.ui.screens
+
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
+import com.openmojang.launcher.data.InstalledVersions
+import com.openmojang.launcher.data.OptionsEditor
+import com.openmojang.launcher.data.OptionsEditor.GraphicsApi
+import com.openmojang.launcher.data.OptionsEditor.Preset
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ModifyScreen() {
+    val context = LocalContext.current
+    val editor = remember { OptionsEditor(context) }
+    val installed = remember { InstalledVersions(context) }
+
+    var options by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var sourceLabel by remember { mutableStateOf("No options.txt found") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var api by remember { mutableStateOf(GraphicsApi.DEFAULT) }
+    var viewDistance by remember { mutableFloatStateOf(192f) }
+    var fancy by remember { mutableStateOf(true) }
+    var smooth by remember { mutableStateOf(true) }
+    var skies by remember { mutableStateOf(true) }
+    var msaa by remember { mutableIntStateOf(2) }
+    var maxFps by remember { mutableIntStateOf(0) }
+    var vsync by remember { mutableStateOf(false) }
+    var multiThread by remember { mutableStateOf(true) }
+
+    fun applyMap(map: Map<String, String>) {
+        options = map
+        api = editor.graphicsApiOf(map)
+        viewDistance = map["gfx_viewdistance"]?.toFloatOrNull() ?: 192f
+        fancy = map["gfx_fancygraphics"] != "0"
+        smooth = map["gfx_smoothlighting"] != "0"
+        skies = map["gfx_fancyskies"] != "0"
+        msaa = map["gfx_msaa"]?.toIntOrNull() ?: 2
+        maxFps = map["gfx_max_framerate"]?.toIntOrNull() ?: 0
+        vsync = map["gfx_vsync"] == "1"
+        multiThread = map["gfx_multithreaded_renderer"] != "0"
+    }
+
+    fun reload() {
+        val loaded = editor.loadBest()
+        if (loaded == null) {
+            sourceLabel = "No options.txt found · pick the file or open Minecraft once"
+            options = emptyMap()
+            message = null
+        } else {
+            sourceLabel = loaded.first
+            applyMap(loaded.second)
+            message = "Loaded"
+        }
+    }
+
+    fun buildOptions(): Map<String, String> {
+        val m = options.toMutableMap()
+        m["gfx_viewdistance"] = viewDistance.toInt().coerceIn(48, 512).toString()
+        m["gfx_fancygraphics"] = if (fancy) "1" else "0"
+        m["gfx_smoothlighting"] = if (smooth) "1" else "0"
+        m["gfx_fancyskies"] = if (skies) "1" else "0"
+        m["gfx_msaa"] = msaa.toString()
+        m["gfx_max_framerate"] = maxFps.toString()
+        m["gfx_vsync"] = if (vsync) "1" else "0"
+        m["gfx_multithreaded_renderer"] = if (multiThread) "1" else "0"
+        editor.setGraphicsApi(m, api)
+        return m
+    }
+
+    val openDoc = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        } catch (_: Exception) {
+        }
+        editor.pickedUri = uri
+        editor.loadFromUri(uri)?.let {
+            sourceLabel = "Picked file"
+            applyMap(it)
+            message = "Loaded from picker"
+        } ?: run { message = "Could not read that file" }
+    }
+
+    LaunchedEffect(Unit) { reload() }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Modify") },
+                actions = {
+                    IconButton(onClick = {
+                        openDoc.launch(OptionsEditor.optionsMimeTypes())
+                    }) {
+                        Icon(Icons.Outlined.FolderOpen, contentDescription = "Pick options.txt")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                "Edits Minecraft Bedrock options.txt — the same file the game reads for graphics.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Source", style = MaterialTheme.typography.labelLarge)
+                    Text(sourceLabel, style = MaterialTheme.typography.bodySmall)
+                    val ver = installed.systemMinecraftVersion()
+                    Text(
+                        if (ver != null) "Minecraft installed · $ver" else "Minecraft not installed",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { reload() }) { Text("Reload") }
+                        TextButton(onClick = {
+                            openDoc.launch(OptionsEditor.optionsMimeTypes())
+                        }) { Text("Pick options.txt") }
+                    }
+                }
+            }
+
+            Text("Presets", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                AssistChip(
+                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.PERFORMANCE)) },
+                    label = { Text("Performance") }
+                )
+                AssistChip(
+                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.BALANCED)) },
+                    label = { Text("Balanced") }
+                )
+                AssistChip(
+                    onClick = { applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.QUALITY)) },
+                    label = { Text("Quality") }
+                )
+            }
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Graphics API", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Writes preferred backend keys into options.txt. The game only honors them on builds that support the setting.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    GraphicsApi.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = api == option,
+                                    onClick = { api = option },
+                                    role = Role.RadioButton
+                                )
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = api == option, onClick = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                when (option) {
+                                    GraphicsApi.DEFAULT -> "Default (game chooses)"
+                                    GraphicsApi.OPENGLES -> "Prefer OpenGL ES"
+                                    GraphicsApi.VULKAN -> "Prefer Vulkan"
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Render", style = MaterialTheme.typography.titleSmall)
+                    Text("View distance: ${viewDistance.toInt()} blocks")
+                    Slider(
+                        value = viewDistance,
+                        onValueChange = { viewDistance = it },
+                        valueRange = 48f..512f,
+                        steps = 14
+                    )
+                    Text("MSAA: ${msaa}x")
+                    Slider(
+                        value = msaa.toFloat(),
+                        onValueChange = { msaa = it.toInt().coerceIn(1, 8) },
+                        valueRange = 1f..8f,
+                        steps = 6
+                    )
+                    Text("Max FPS: ${if (maxFps == 0) "Unlimited" else maxFps}")
+                    Slider(
+                        value = maxFps.toFloat(),
+                        onValueChange = { maxFps = it.toInt() },
+                        valueRange = 0f..120f,
+                        steps = 23
+                    )
+                    SwitchRow("Fancy graphics", fancy) { fancy = it }
+                    SwitchRow("Smooth lighting", smooth) { smooth = it }
+                    SwitchRow("Fancy skies", skies) { skies = it }
+                    SwitchRow("VSync", vsync) { vsync = it }
+                    SwitchRow("Multithreaded renderer", multiThread) { multiThread = it }
+                }
+            }
+
+            Button(
+                onClick = {
+                    val built = buildOptions()
+                    options = built
+                    val result = editor.saveBest(built)
+                    message = result ?: "Save failed · pick options.txt with write access"
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.Save, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Apply to Minecraft")
+            }
+
+            OutlinedButton(
+                onClick = { installed.launchSystemMinecraft() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = installed.isSystemMinecraftInstalled()
+            ) {
+                Text("Open Minecraft")
+            }
+
+            message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+
+            Text(
+                "Close Minecraft before applying. On Android 11+ use Pick options.txt if auto-detect fails (Android/data is blocked).",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
