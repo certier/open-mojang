@@ -26,7 +26,13 @@ class SkinManager(private val context: Context) {
     fun list(): List<LocalSkin> {
         val active = activeId()
         if (!indexFile.exists()) {
-            val steve = LocalSkin("steve", "Steve", "", isSteve = true, active = active == null || active == "steve")
+            val steve = LocalSkin(
+                "steve",
+                "Steve",
+                "",
+                isSteve = true,
+                active = active == null || active == "steve"
+            )
             saveIndex(listOf(steve))
             if (active == null) setActive("steve")
             return listOf(steve.copy(active = activeId() == "steve"))
@@ -40,11 +46,28 @@ class SkinManager(private val context: Context) {
         activeFile.writeText(id)
     }
 
+    fun rename(id: String, newName: String): Boolean {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return false
+        val all = readAll()
+        val idx = all.indexOfFirst { it.id == id }
+        if (idx < 0) return false
+        val updated = all.toMutableList()
+        updated[idx] = updated[idx].copy(name = trimmed)
+        saveIndex(updated)
+        return true
+    }
+
     fun importFromUri(uri: Uri, name: String): LocalSkin? {
         return try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            // Classic or slim HD skins: width multiple of 64, height 32 or 64 (or multiples)
             if (bitmap.width < 64 || bitmap.height < 32) return null
+            if (bitmap.width % 64 != 0) return null
+            val ratio = bitmap.height.toFloat() / bitmap.width
+            if (ratio != 0.5f && ratio != 1.0f) return null
+
             val id = "skin_${System.currentTimeMillis()}"
             val out = File(skinsDir, "$id.png")
             FileOutputStream(out).use { stream ->
@@ -76,7 +99,11 @@ class SkinManager(private val context: Context) {
         val x = (8 * scale).toInt()
         val y = (8 * scale).toInt()
         if (x + size > full.width || y + size > full.height) return full
-        return Bitmap.createBitmap(full, x, y, size, size)
+        return try {
+            Bitmap.createBitmap(full, x, y, size, size)
+        } catch (_: Exception) {
+            full
+        }
     }
 
     private fun activeId(): String? =
