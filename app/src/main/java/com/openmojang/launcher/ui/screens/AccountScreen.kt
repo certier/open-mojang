@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.openmojang.launcher.data.AccountStore
 import com.openmojang.launcher.data.AuthManager
 import com.openmojang.launcher.data.MsAccount
 import kotlinx.coroutines.launch
@@ -20,11 +21,14 @@ import kotlinx.coroutines.launch
 fun AccountScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { AuthManager(context) }
+    val store = remember { AccountStore(context) }
     val scope = rememberCoroutineScope()
 
     var account by remember { mutableStateOf<MsAccount?>(auth.current()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var editName by remember { mutableStateOf(account?.gamertag.orEmpty()) }
+    var editing by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -68,7 +72,7 @@ fun AccountScreen(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Demo profile until an Azure client id is set.",
+                        "Demo profile until an Azure client id is set. Home and skins still work.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -85,7 +89,10 @@ fun AccountScreen(onBack: () -> Unit) {
                                     return@launch
                                 }
                                 val result = auth.signIn(activity)
-                                result.onSuccess { account = it }.onFailure { error = it.message }
+                                result.onSuccess {
+                                    account = it
+                                    editName = it.gamertag
+                                }.onFailure { error = it.message }
                                 loading = false
                             }
                         },
@@ -97,17 +104,66 @@ fun AccountScreen(onBack: () -> Unit) {
                     }
                 }
                 else -> {
-                    Text(account!!.gamertag, style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        account!!.uuid,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(24.dp))
+                    if (editing) {
+                        OutlinedTextField(
+                            value = editName,
+                            onValueChange = { editName = it },
+                            label = { Text("Gamertag") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    val trimmed = editName.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        val updated = account!!.copy(gamertag = trimmed)
+                                        store.save(updated)
+                                        account = updated
+                                        editing = false
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Save") }
+                            OutlinedButton(
+                                onClick = {
+                                    editName = account!!.gamertag
+                                    editing = false
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Cancel") }
+                        }
+                    } else {
+                        Text(account!!.gamertag, style = MaterialTheme.typography.headlineMedium)
+                        Text(
+                            account!!.uuid,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (account!!.accessToken == "demo-token") {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Local demo profile",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedButton(
+                            onClick = {
+                                editName = account!!.gamertag
+                                editing = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Edit gamertag") }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     OutlinedButton(
                         onClick = {
                             auth.signOut()
                             account = null
+                            editing = false
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Sign out") }
