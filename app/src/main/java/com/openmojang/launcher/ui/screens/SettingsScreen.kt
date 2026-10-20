@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.openmojang.launcher.data.AbiPref
 import com.openmojang.launcher.data.MirrorPref
+import com.openmojang.launcher.data.MusicPref
 import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.ThemeMode
 import kotlin.math.roundToInt
@@ -36,6 +37,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var wifiOnly by remember { mutableStateOf(store.wifiOnlyDownloads) }
     var mirror by remember { mutableStateOf(store.preferredMirror) }
     var abi by remember { mutableStateOf(store.preferredAbi) }
+    var music by remember { mutableStateOf(store.preferredMusic) }
     var theme by remember { mutableStateOf(store.themeMode) }
     var cacheLabel by remember { mutableStateOf(formatBytes(store.cacheBytes())) }
     var clearMsg by remember { mutableStateOf<String?>(null) }
@@ -108,6 +110,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                             onSelect = {
                                 abi = option
                                 store.preferredAbi = option
+                            }
+                        )
+                    }
+                }
+            }
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Music package", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Mirrors like MCPE-Planet ship two APKs per version — full (with music) or slim (no music).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    MusicPref.entries.forEach { option ->
+                        RadioRow(
+                            label = when (option) {
+                                MusicPref.NO_MUSIC -> "No music (smaller)"
+                                MusicPref.WITH_MUSIC -> "With music (full)"
+                                MusicPref.AUTO -> "Auto (prefer no music)"
+                            },
+                            selected = music == option,
+                            onSelect = {
+                                music = option
+                                store.preferredMusic = option
                             }
                         )
                     }
