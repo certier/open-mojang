@@ -20,19 +20,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "Android SDK: $ANDROID_HOME"
+          ls "$ANDROID_HOME" || true
+
+      - name: Install platform 35 + build-tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "platform-tools" || \
+          yes | sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "platform-tools" || true
 
       - name: Generate Gradle Wrapper
         run: |
-          if [ ! -f ./gradlew ]; then
-            gradle wrapper --gradle-version 8.9
-          fi
+          gradle wrapper --gradle-version 8.9
           chmod +x ./gradlew
 
       - name: Build Debug APK
