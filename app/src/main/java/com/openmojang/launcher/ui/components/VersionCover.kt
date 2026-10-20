@@ -2,6 +2,7 @@ package com.openmojang.launcher.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,7 +71,6 @@ fun coverTag(version: McVersion): String = when (version.cover) {
     else -> version.typeLabel
 }
 
-/** Screenshot captions per version theme. */
 fun screenshotCaptions(version: McVersion): List<String> = when (version.cover) {
     "ice" -> listOf("Ice Caves", "Frostbite", "Brittle ice")
     "patch" -> listOf("Stability", "Realms fix", "Combat")
@@ -80,9 +80,6 @@ fun screenshotCaptions(version: McVersion): List<String> = when (version.cover) 
     else -> listOf("World", "Gameplay", "Fixes")
 }
 
-/**
- * List-row cover — gradient + light accent only (cheap to scroll).
- */
 @Composable
 fun VersionCover(
     version: McVersion,
@@ -99,7 +96,6 @@ fun VersionCover(
             .clip(RoundedCornerShape(16.dp))
             .background(Brush.verticalGradient(listOf(p.top, p.bottom)))
     ) {
-        // Single accent block — no per-frame path loops in the list
         Canvas(Modifier.fillMaxSize()) {
             val s = size.minDimension * 0.16f
             drawRect(
@@ -137,10 +133,6 @@ fun VersionCover(
     }
 }
 
-/**
- * Detail screenshot strip — drawn once when the sheet opens.
- * Looks like update screenshots: scene + caption.
- */
 @Composable
 fun VersionScreenshotStrip(
     version: McVersion,
@@ -148,26 +140,28 @@ fun VersionScreenshotStrip(
 ) {
     val captions = remember(version.id, version.cover) { screenshotCaptions(version) }
     val p = remember(version.cover) { paletteFor(version.cover) }
+    val borderColor = MaterialTheme.colorScheme.outlineVariant
 
     Column(modifier.fillMaxWidth()) {
         Text(
             "Screenshots",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp)
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 10.dp)
         )
         Row(
             Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             captions.forEachIndexed { index, caption ->
                 ScreenshotCard(
                     cover = version.cover,
                     palette = p,
                     caption = caption,
-                    variant = index
+                    variant = index,
+                    borderColor = borderColor
                 )
             }
         }
@@ -179,36 +173,42 @@ private fun ScreenshotCard(
     cover: String,
     palette: CoverPalette,
     caption: String,
-    variant: Int
+    variant: Int,
+    borderColor: Color
 ) {
-    Column(Modifier.width(168.dp)) {
+    Column(Modifier.width(180.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(100.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .height(120.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, borderColor, RoundedCornerShape(14.dp))
                 .background(Brush.verticalGradient(listOf(palette.top, palette.bottom)))
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawScene(cover, palette, variant)
             }
-            // fake phone chrome bar
             Box(
                 Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 6.dp)
-                    .width(36.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.Black.copy(alpha = 0.25f))
+                    .padding(top = 8.dp)
+                    .width(40.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+            Text(
+                caption,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(10.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
-        Text(
-            caption,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            modifier = Modifier.padding(top = 6.dp, start = 2.dp)
-        )
     }
 }
 
