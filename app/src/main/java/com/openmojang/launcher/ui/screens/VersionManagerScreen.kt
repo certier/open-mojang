@@ -13,12 +13,14 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,6 +38,7 @@ import com.openmojang.launcher.data.MirrorPref
 import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.VersionRepository
 import com.openmojang.launcher.download.DownloadService
+import com.openmojang.launcher.ui.components.VersionCover
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -147,6 +150,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         val typeOk = when (filter) {
             "release" -> v.type == "release"
             "beta" -> v.type == "beta"
+            "patch" -> v.type == "patch"
             else -> true
         }
         val q = query.trim()
@@ -154,6 +158,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             v.name.contains(q, ignoreCase = true) ||
             v.patch.contains(q, ignoreCase = true) ||
             v.id.contains(q, ignoreCase = true) ||
+            v.typeLabel.contains(q, ignoreCase = true) ||
             v.changelog.contains(q, ignoreCase = true)
         typeOk && queryOk
     }
@@ -180,7 +185,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         Text(
                             buildString {
                                 append(ver)
-                                if (match != null) append(" · catalog ${match.displayName}")
+                                if (match != null) append(" · ${match.typeLabel} ${match.displayName}")
                             }
                         )
                     },
@@ -207,44 +212,65 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 singleLine = true,
                 label = { Text("Search") },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("1.26.52.3, beta, ice caves…") }
+                placeholder = { Text("1.26.52.3, patch, ice…") }
             )
             Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(selected = filter == "all", onClick = { filter = "all" }, label = { Text("All") })
-                FilterChip(selected = filter == "release", onClick = { filter = "release" }, label = { Text("Stable") })
+                FilterChip(selected = filter == "release", onClick = { filter = "release" }, label = { Text("Release") })
+                FilterChip(selected = filter == "patch", onClick = { filter = "patch" }, label = { Text("Minecraft Patch") })
                 FilterChip(selected = filter == "beta", onClick = { filter = "beta" }, label = { Text("Beta") })
             }
-            LazyColumn {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 items(shown, key = { it.id }) { v ->
                     val cached = engine.cached("minecraft-${v.id}.apk")
-                    ListItem(
-                        headlineContent = { Text(v.displayName) },
-                        supportingContent = {
-                            Text(
-                                buildString {
-                                    append("${v.type}")
-                                    if (v.isPatch) append(" · patch")
-                                    append(" · ${v.date} · ~${v.sizeMb} MB")
-                                    if (cached != null) append(" · saved ${mb(cached.length())} MB")
-                                }
-                            )
-                        },
-                        leadingContent = { Icon(Icons.Outlined.Download, contentDescription = null) },
-                        trailingContent = {
-                            FilledTonalButton(onClick = {
+                    ElevatedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
                                 sheetVersion = v
                                 error = null
                                 statusLine = ""
                                 progress = DownloadProgress(0f, 0, 0)
                                 downloading = false
                                 apk = engine.cached("minecraft-${v.id}.apk")
-                            }) { Text(if (cached != null) "Install" else "Get") }
+                            }
+                    ) {
+                        VersionCover(version = v, height = 88.dp)
+                        Column(Modifier.padding(12.dp)) {
+                            Text(v.displayName, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                buildString {
+                                    append(v.typeLabel)
+                                    append(" · ${v.date} · ~${v.sizeMb} MB")
+                                    if (cached != null) append(" · saved ${mb(cached.length())} MB")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            FilledTonalButton(
+                                onClick = {
+                                    sheetVersion = v
+                                    error = null
+                                    statusLine = ""
+                                    progress = DownloadProgress(0f, 0, 0)
+                                    downloading = false
+                                    apk = engine.cached("minecraft-${v.id}.apk")
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (cached != null) "Install" else "Download")
+                            }
                         }
-                    )
-                    HorizontalDivider()
+                    }
                 }
             }
         }
@@ -252,24 +278,19 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
     val target = sheetVersion
     if (target != null) {
-        ModalBottomSheet(
-            onDismissRequest = { sheetVersion = null }
-        ) {
+        ModalBottomSheet(onDismissRequest = { sheetVersion = null }) {
             Column(
                 Modifier
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 32.dp)
                     .navigationBarsPadding()
             ) {
+                VersionCover(version = target, height = 120.dp)
+                Spacer(Modifier.height(12.dp))
                 Text(target.displayName, style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    buildString {
-                        append(target.type)
-                        if (target.isPatch) append(" · patch")
-                        append(" · ${target.date} · ~${target.sizeMb} MB")
-                        if (target.patch != target.name) append(" · id ${target.id}")
-                    },
+                    "${target.typeLabel} · ${target.date} · ~${target.sizeMb} MB",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -303,7 +324,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     }
                     Text(label, style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "Runs in background — check the notification",
+                        "Background download — notification stays up",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
