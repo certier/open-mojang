@@ -1,0 +1,319 @@
+package com.openmojang.launcher.download
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.openmojang.launcher.MainActivity
+import com.openmojang.launcher.R
+import com.openmojang.launcher.data.DownloadEngine
+import com.openmojang.launcher.data.DownloadProgress
+import com.openmojang.launcher.data.SettingsStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.io.File
+import kotlin.math.roundToInt
+
+/**
+ * Background APK download as a foreground service.
+ * Progress is shown in a sticky notification and broadcast to the UI.
+ */
+class DownloadService : Service() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var job: Job? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            job?.cancel()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val versionId = intent?.getStringExtra(EXTRA_VERSION_ID) ?: run {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        val versionName = intent.getStringExtra(EXTRA_VERSION_NAME) ?: versionId
+        val sizeMb = intent.getIntExtra(EXTRA_SIZE_MB, 0)
+        val fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: "minecraft-$versionId.apk"
+        val urls = intent.getStringArrayExtra(EXTRA_URLS)?.toList().orEmpty()
+
+        if (urls.isEmpty()) {
+            broadcastError(versionId, "No download URLs")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        ensureChannel()
+        val notification = buildNotification(versionName, 0, 0, 0, indeterminate = true)
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(
+                NOTIF_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+
+        job?.cancel()
+        job = scope.launch {
+            val engine = DownloadEngine(applicationContext)
+            val settings = SettingsStore(applicationContext)
+            try {
+                broadcastProgress(versionId, DownloadProgress(0f, 0, 0), versionName)
+                val file = engine.downloadFirst(urls, fileName) { p ->
+                    updateNotification(versionName, p)
+                    broadcastProgress(versionId, p, versionName)
+                }
+
+                // Size check vs catalog (allow ~15% slack for mirror variance)
+                if (sizeMb > 0) {
+                    val expected = sizeMb * 1024L * 1024L
+                    val actual = file.length()
+                    val minOk = (expected * 0.70).toLong()
+                    val maxOk = (expected * 1.25).toLong()
+                    if (actual < minOk || actual > maxOk) {
+                        file.delete()
+                        throw IllegalStateException(
+                            "Size mismatch: got ${mb(actual)} MB, catalog says ~$sizeMb MB"
+                        )
+                    }
+                }
+
+                // APK magic: ZIP local header PK\x03\x04
+                if (!looksLikeApk(file)) {
+                    file.delete()
+                    throw IllegalStateException("Downloaded file is not a valid APK")
+                }
+
+                completeNotification(versionName, file.length(), success = true)
+                broadcastComplete(versionId, file.absolutePath, file.length())
+
+                if (settings.installAfterDownload) {
+                    engine.installApk(file)
+                }
+            } catch (e: Exception) {
+                completeNotification(versionName, 0, success = false, message = e.message)
+                broadcastError(versionId, e.message ?: "Download failed")
+            } finally {
+                stopForeground(STOP_FOREGROUND_DETACH)
+                stopSelf()
+            }
+        }
+
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        job?.cancel()
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT < 26) return
+        val mgr = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Downloads",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Minecraft APK download progress"
+            setShowBadge(false)
+        }
+        mgr.createNotificationChannel(channel)
+    }
+
+    private fun openAppIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getActivity(this, 0, intent, flags)
+    }
+
+    private fun cancelIntent(): PendingIntent {
+        val intent = Intent(this, DownloadService::class.java).apply { action = ACTION_CANCEL }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getService(this, 1, intent, flags)
+    }
+
+    private fun buildNotification(
+        versionName: String,
+        percent: Int,
+        read: Long,
+        total: Long,
+        indeterminate: Boolean
+    ): Notification {
+        val text = when {
+            indeterminate -> "Resolving APK…"
+            total > 0 -> "$percent% · ${mb(read)} / ${mb(total)} MB"
+            else -> "${mb(read)} MB"
+        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Downloading Minecraft $versionName")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setContentIntent(openAppIntent())
+            .addAction(0, "Cancel", cancelIntent())
+            .setProgress(
+                if (indeterminate || total <= 0) 0 else 100,
+                if (indeterminate) 0 else percent.coerceIn(0, 100),
+                indeterminate || total <= 0
+            )
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .build()
+    }
+
+    private fun updateNotification(versionName: String, p: DownloadProgress) {
+        val percent = if (p.bytesTotal > 0) {
+            (p.fraction * 100).roundToInt()
+        } else 0
+        val n = buildNotification(
+            versionName,
+            percent,
+            p.bytesRead,
+            p.bytesTotal,
+            indeterminate = p.bytesRead == 0L
+        )
+        val mgr = getSystemService(NotificationManager::class.java)
+        mgr.notify(NOTIF_ID, n)
+    }
+
+    private fun completeNotification(
+        versionName: String,
+        bytes: Long,
+        success: Boolean,
+        message: String? = null
+    ) {
+        val title = if (success) "Download complete" else "Download failed"
+        val text = when {
+            success -> "Minecraft $versionName · ${mb(bytes)} MB"
+            else -> message ?: "Failed"
+        }
+        val n = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(
+                if (success) android.R.drawable.stat_sys_download_done
+                else android.R.drawable.stat_notify_error
+            )
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setContentIntent(openAppIntent())
+            .setProgress(0, 0, false)
+            .build()
+        val mgr = getSystemService(NotificationManager::class.java)
+        mgr.notify(NOTIF_ID + 1, n)
+    }
+
+    private fun broadcastProgress(versionId: String, p: DownloadProgress, name: String) {
+        sendBroadcast(
+            Intent(ACTION_PROGRESS).setPackage(packageName).apply {
+                putExtra(EXTRA_VERSION_ID, versionId)
+                putExtra(EXTRA_VERSION_NAME, name)
+                putExtra(EXTRA_FRACTION, p.fraction)
+                putExtra(EXTRA_BYTES_READ, p.bytesRead)
+                putExtra(EXTRA_BYTES_TOTAL, p.bytesTotal)
+            }
+        )
+    }
+
+    private fun broadcastComplete(versionId: String, path: String, bytes: Long) {
+        sendBroadcast(
+            Intent(ACTION_COMPLETE).setPackage(packageName).apply {
+                putExtra(EXTRA_VERSION_ID, versionId)
+                putExtra(EXTRA_PATH, path)
+                putExtra(EXTRA_BYTES_TOTAL, bytes)
+            }
+        )
+    }
+
+    private fun broadcastError(versionId: String, message: String) {
+        sendBroadcast(
+            Intent(ACTION_ERROR).setPackage(packageName).apply {
+                putExtra(EXTRA_VERSION_ID, versionId)
+                putExtra(EXTRA_MESSAGE, message)
+            }
+        )
+    }
+
+    companion object {
+        const val CHANNEL_ID = "open_mojang_downloads"
+        const val NOTIF_ID = 42001
+
+        const val ACTION_PROGRESS = "com.openmojang.launcher.DOWNLOAD_PROGRESS"
+        const val ACTION_COMPLETE = "com.openmojang.launcher.DOWNLOAD_COMPLETE"
+        const val ACTION_ERROR = "com.openmojang.launcher.DOWNLOAD_ERROR"
+        const val ACTION_CANCEL = "com.openmojang.launcher.DOWNLOAD_CANCEL"
+
+        const val EXTRA_VERSION_ID = "version_id"
+        const val EXTRA_VERSION_NAME = "version_name"
+        const val EXTRA_SIZE_MB = "size_mb"
+        const val EXTRA_FILE_NAME = "file_name"
+        const val EXTRA_URLS = "urls"
+        const val EXTRA_FRACTION = "fraction"
+        const val EXTRA_BYTES_READ = "bytes_read"
+        const val EXTRA_BYTES_TOTAL = "bytes_total"
+        const val EXTRA_PATH = "path"
+        const val EXTRA_MESSAGE = "message"
+
+        fun start(
+            context: Context,
+            versionId: String,
+            versionName: String,
+            sizeMb: Int,
+            urls: List<String>
+        ) {
+            val intent = Intent(context, DownloadService::class.java).apply {
+                putExtra(EXTRA_VERSION_ID, versionId)
+                putExtra(EXTRA_VERSION_NAME, versionName)
+                putExtra(EXTRA_SIZE_MB, sizeMb)
+                putExtra(EXTRA_FILE_NAME, "minecraft-$versionId.apk")
+                putExtra(EXTRA_URLS, urls.toTypedArray())
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        private fun mb(bytes: Long): String =
+            if (bytes <= 0L) "0.0" else "%.1f".format(bytes / (1024.0 * 1024.0))
+
+        private fun looksLikeApk(file: File): Boolean {
+            if (!file.exists() || file.length() < 1000) return false
+            return try {
+                file.inputStream().use { input ->
+                    val header = ByteArray(4)
+                    val n = input.read(header)
+                    n == 4 &&
+                        header[0] == 0x50.toByte() && // P
+                        header[1] == 0x4B.toByte() && // K
+                        header[2] == 0x03.toByte() &&
+                        header[3] == 0x04.toByte()
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+}
