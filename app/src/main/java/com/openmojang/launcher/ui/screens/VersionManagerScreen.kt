@@ -8,7 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmojang.launcher.data.ChangelogProvider
 import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
 import com.openmojang.launcher.data.VersionRepository
@@ -102,11 +105,20 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
         selected?.let { v ->
             Spacer(Modifier.height(12.dp))
+            val rich = ChangelogProvider.forVersion(v.id)
+            val body = if (rich.startsWith("No detailed")) v.changelog else rich
+
             Card(
                 colors = CardDefaults.cardColors(containerColor = DirtBrown),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
             ) {
-                Column(Modifier.padding(12.dp)) {
+                Column(
+                    Modifier
+                        .padding(12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text(
                         text = "What ${v.name} fixes / adds",
                         fontWeight = FontWeight.Bold,
@@ -114,7 +126,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         fontSize = 14.sp
                     )
                     Spacer(Modifier.height(6.dp))
-                    Text(text = v.changelog, color = TextLight, fontSize = 13.sp)
+                    Text(text = body, color = TextLight, fontSize = 13.sp)
                 }
             }
 
