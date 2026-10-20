@@ -20,19 +20,36 @@ data class DownloadProgress(
     val bytesTotal: Long
 )
 
-/**
- * Pulls the APK inside the app (follows redirects, scrapes a page for the
- * first .apk href when the catalog only has a version page) then commits a
- * PackageInstaller session so Android shows the same install sheet Play uses.
- */
 class DownloadEngine(private val context: Context) {
 
     private val client = OkHttpClient.Builder()
         .followRedirects(true)
         .followSslRedirects(true)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .build()
+
+    fun cached(fileName: String): File? {
+        val file = File(downloadDir(), fileName)
+        return if (file.exists() && file.length() > 1_000_000L) file else null
+    }
+
+    suspend fun downloadFirst(
+        urls: List<String>,
+        fileName: String,
+        onProgress: (DownloadProgress) -> Unit = {}
+    ): File {
+        var last: Exception? = null
+        for (url in urls.distinct()) {
+            try {
+                return downloadApk(url, fileName, onProgress)
+            } catch (e: Exception) {
+                last = e
+                onProgress(DownloadProgress(0f, 0, 0))
+            }
+        }
+        throw last ?: IllegalStateException("No download URL")
+    }
 
     suspend fun downloadApk(
         pageOrApkUrl: String,
@@ -50,8 +67,7 @@ class DownloadEngine(private val context: Context) {
             }
             val body = response.body ?: throw IllegalStateException("Empty body")
             val total = body.contentLength()
-            val dir = File(context.getExternalFilesDir(null), "Download").apply { mkdirs() }
-            val outFile = File(dir, fileName)
+            val outFile = File(downloadDir(), fileName)
             body.byteStream().use { input ->
                 FileOutputStream(outFile).use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -68,7 +84,7 @@ class DownloadEngine(private val context: Context) {
             }
             if (outFile.length() < 1_000_000L) {
                 outFile.delete()
-                throw IllegalStateException("File is not a Minecraft APK (too small). Mirror blocked the direct link.")
+                throw IllegalStateException("Mirror did not return an APK")
             }
             outFile
         }
@@ -82,7 +98,7 @@ class DownloadEngine(private val context: Context) {
             .build()
         client.newCall(head).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IllegalStateException("Could not open download page: HTTP ${response.code}")
+                throw IllegalStateException("Page failed: HTTP ${response.code}")
             }
             val finalUrl = response.request.url.toString()
             val type = response.header("Content-Type").orEmpty()
@@ -95,8 +111,10 @@ class DownloadEngine(private val context: Context) {
             val html = response.body?.string().orEmpty()
             val link = APK_HREF.find(html)?.groupValues?.get(1)
                 ?: APK_ABS.find(html)?.value
-                ?: throw IllegalStateException("No direct APK on that page yet")
-            return if (link.startsWith("http")) link else response.request.url.resolve(link).toString()
+                ?: throw IllegalStateException("No APK link on page")
+            return if (link.startsWith("http")) link
+            else response.request.url.resolve(link)?.toString()
+                ?: throw IllegalStateException("Bad APK link")
         }
     }
 
@@ -123,6 +141,9 @@ class DownloadEngine(private val context: Context) {
             session.commit(pending.intentSender)
         }
     }
+
+    private fun downloadDir(): File =
+        File(context.getExternalFilesDir(null), "Download").apply { mkdirs() }
 
     companion object {
         const val ACTION_INSTALL = "com.openmojang.launcher.INSTALL_STATUS"
