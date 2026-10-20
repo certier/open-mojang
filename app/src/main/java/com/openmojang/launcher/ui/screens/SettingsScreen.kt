@@ -1,16 +1,9 @@
 package com.openmojang.launcher.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,65 +16,69 @@ import com.openmojang.launcher.data.MirrorPref
 import com.openmojang.launcher.data.MusicPref
 import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.ThemeMode
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen() {
     val context = LocalContext.current
     val store = remember { SettingsStore(context) }
 
     var autoUpdate by remember { mutableStateOf(store.autoCheckUpdates) }
-    var keepOld by remember { mutableStateOf(store.keepOldVersions) }
+    var keepOld by remember { mutableStateOf(store.keepOldApks) }
     var installAfter by remember { mutableStateOf(store.installAfterDownload) }
-    var wifiOnly by remember { mutableStateOf(store.wifiOnlyDownloads) }
+    var wifiOnly by remember { mutableStateOf(store.wifiOnly) }
     var mirror by remember { mutableStateOf(store.preferredMirror) }
     var abi by remember { mutableStateOf(store.preferredAbi) }
     var music by remember { mutableStateOf(store.preferredMusic) }
     var theme by remember { mutableStateOf(store.themeMode) }
-    var cacheLabel by remember { mutableStateOf(formatBytes(store.cacheBytes())) }
-    var clearMsg by remember { mutableStateOf<String?>(null) }
+    var cacheLabel by remember { mutableStateOf(formatCache(store.cacheBytes())) }
+    var message by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        }
+        topBar = { TopAppBar(title = { Text("Settings") }) }
     ) { padding ->
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SectionHeader("Downloads")
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Downloads", style = MaterialTheme.typography.titleSmall)
+                    SwitchRow("Auto-check updates", autoUpdate) {
+                        autoUpdate = it
+                        store.autoCheckUpdates = it
+                    }
+                    SwitchRow("Keep old APKs", keepOld) {
+                        keepOld = it
+                        store.keepOldApks = it
+                    }
+                    SwitchRow("Install after download", installAfter) {
+                        installAfter = it
+                        store.installAfterDownload = it
+                    }
+                    SwitchRow("Wi‑Fi only", wifiOnly) {
+                        wifiOnly = it
+                        store.wifiOnly = it
+                    }
+                }
+            }
 
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Mirror", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Where APKs are resolved from",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
                     MirrorPref.entries.forEach { option ->
                         RadioRow(
                             label = when (option) {
-                                MirrorPref.AUTO -> "Auto (try all)"
-                                MirrorPref.MCPEDL -> "MCPEDL only"
-                                MirrorPref.MCPE_PLANET -> "MCPE-Planet only"
+                                MirrorPref.AUTO -> "Auto"
+                                MirrorPref.MCPEDL -> "MCPEDL"
+                                MirrorPref.MCPE_PLANET -> "MCPE-Planet"
                             },
                             selected = mirror == option,
-                            onSelect = {
+                            onClick = {
                                 mirror = option
                                 store.preferredMirror = option
                             }
@@ -90,15 +87,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Architecture", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "arm64 is correct for almost every modern phone",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ABI", style = MaterialTheme.typography.titleSmall)
                     AbiPref.entries.forEach { option ->
                         RadioRow(
                             label = when (option) {
@@ -107,7 +98,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 AbiPref.ARM32 -> "armeabi-v7a only"
                             },
                             selected = abi == option,
-                            onSelect = {
+                            onClick = {
                                 abi = option
                                 store.preferredAbi = option
                             }
@@ -116,24 +107,24 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Music package", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Mirrors like MCPE-Planet ship two APKs per version — full (with music) or slim (no music).",
+                        "Mirrors ship two APKs — full (with music) or slim (no music). " +
+                            "After changing this, open the version and tap Redownload.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(8.dp))
                     MusicPref.entries.forEach { option ->
                         RadioRow(
                             label = when (option) {
                                 MusicPref.NO_MUSIC -> "No music (smaller)"
                                 MusicPref.WITH_MUSIC -> "With music (full)"
-                                MusicPref.AUTO -> "Auto (prefer no music)"
+                                MusicPref.AUTO -> "Auto"
                             },
                             selected = music == option,
-                            onSelect = {
+                            onClick = {
                                 music = option
                                 store.preferredMusic = option
                             }
@@ -142,210 +133,82 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    SwitchRow(
-                        title = "Auto-check updates",
-                        subtitle = "Compare catalog to installed Minecraft on open",
-                        checked = autoUpdate,
-                        onCheckedChange = {
-                            autoUpdate = it
-                            store.autoCheckUpdates = it
-                        }
-                    )
-                    HorizontalDivider()
-                    SwitchRow(
-                        title = "Keep old APKs",
-                        subtitle = "Leave completed downloads after install",
-                        checked = keepOld,
-                        onCheckedChange = {
-                            keepOld = it
-                            store.keepOldVersions = it
-                        }
-                    )
-                    HorizontalDivider()
-                    SwitchRow(
-                        title = "Install after download",
-                        subtitle = "Open the system install sheet automatically",
-                        checked = installAfter,
-                        onCheckedChange = {
-                            installAfter = it
-                            store.installAfterDownload = it
-                        }
-                    )
-                    HorizontalDivider()
-                    SwitchRow(
-                        title = "Wi‑Fi only",
-                        subtitle = "Block downloads on mobile data",
-                        checked = wifiOnly,
-                        onCheckedChange = {
-                            wifiOnly = it
-                            store.wifiOnlyDownloads = it
-                        }
-                    )
-                }
-            }
-
-            SectionHeader("Appearance")
-
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Theme", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
                     ThemeMode.entries.forEach { option ->
                         RadioRow(
                             label = when (option) {
-                                ThemeMode.SYSTEM -> "System default"
+                                ThemeMode.SYSTEM -> "System"
                                 ThemeMode.LIGHT -> "Light"
                                 ThemeMode.DARK -> "Dark"
                             },
                             selected = theme == option,
-                            onSelect = {
+                            onClick = {
                                 theme = option
                                 store.themeMode = option
                             }
                         )
                     }
-                    Text(
-                        "Theme applies on next app open.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
                 }
             }
 
-            SectionHeader("Storage")
-
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Storage,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Downloaded APKs", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                cacheLabel,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Cache", style = MaterialTheme.typography.titleSmall)
+                    Text(cacheLabel, style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(
                         onClick = {
                             val n = store.clearCache()
-                            cacheLabel = formatBytes(store.cacheBytes())
-                            clearMsg = if (n == 0) "Nothing to clear" else "Removed $n file(s)"
+                            cacheLabel = formatCache(store.cacheBytes())
+                            message = "Cleared $n file(s)"
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Delete, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Clear download cache")
-                    }
-                    clearMsg?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, style = MaterialTheme.typography.labelMedium)
-                    }
+                    ) { Text("Clear download cache") }
                 }
             }
 
-            SectionHeader("About")
-
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text("Maple Launcher", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "v0.1.0",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Text(
-                        "Unofficial Bedrock launcher. Not affiliated with Mojang or Microsoft.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    TextButton(
-                        onClick = {
-                            context.startActivity(
-                                Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse("https://github.com/certier/open-mojang")
-                                )
-                            )
-                        }
-                    ) { Text("GitHub repository") }
-                }
+            message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
 
-            Spacer(Modifier.height(24.dp))
+            Text(
+                "Maple Launcher 0.1.0",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-    )
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle) },
-        trailingContent = {
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
-        }
-    )
-}
-
-@Composable
-private fun RadioRow(
-    label: String,
-    selected: Boolean,
-    onSelect: () -> Unit
-) {
+private fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
             .fillMaxWidth()
-            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton)
-            .padding(vertical = 6.dp),
+            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(label)
     }
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes <= 0L) return "0 MB"
-    val mb = bytes / (1024.0 * 1024.0)
-    return if (mb >= 1024) "${(mb / 1024.0).let { "%.1f".format(it) }} GB"
-    else "${mb.roundToInt()} MB"
+private fun formatCache(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB cached"
+    return "${bytes / (1024 * 1024)} MB cached"
 }
