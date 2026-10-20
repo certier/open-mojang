@@ -6,22 +6,18 @@
     android:viewportHeight="108">
     <!-- soft glow -->
     <path
-        android:fillColor="#1A237E"
-        android:pathData="M54,22c-14,0 -26,12 -26,26c0,10 5,18 13,23l13,19l13,-19c8,-5 13,-13 13,-23c0,-14 -12,-26 -26,-26z"
-        android:fillAlpha="0.35" />
-    <!-- peak mountain -->
-    <path
-        android:fillColor="#3D5AFE"
-        android:pathData="M28,78 L54,30 L80,78 Z" />
-    <!-- snow tip -->
-    <path
-        android:fillColor="#E8F0FF"
-        android:pathData="M48,42 L54,30 L60,42 L54,46 Z" />
-    <!-- gold accent block (Minecraft nod) -->
-    <path
-        android:fillColor="#FFC107"
-        android:pathData="M48,62h12v12h-12z" />
+        android:fillColor="#B71C1C"
+        android:fillAlpha="0.35"
+        android:pathData="M54,28c-16,0 -28,12 -28,28c0,12 7,22 17,26l11,14l11,-14c10,-4 17,-14 17,-26c0,-16 -12,-28 -28,-28z" />
+    <!-- maple-ish leaf (stylized) -->
     <path
         android:fillColor="#FF8F00"
-        android:pathData="M48,62h12v3h-12z" />
+        android:pathData="M54,32 L62,48 L78,46 L66,58 L72,74 L54,64 L36,74 L42,58 L30,46 L46,48 Z" />
+    <path
+        android:fillColor="#FFC107"
+        android:pathData="M54,40 L58,50 L54,56 L50,50 Z" />
+    <!-- stem -->
+    <path
+        android:fillColor="#FFF3E0"
+        android:pathData="M52,64 h4 v14 h-4 z" />
 </vector>
