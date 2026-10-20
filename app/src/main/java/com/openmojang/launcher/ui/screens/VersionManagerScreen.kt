@@ -1,6 +1,9 @@
 package com.openmojang.launcher.ui.screens
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -20,6 +23,8 @@ import com.openmojang.launcher.data.DownloadEngine
 import com.openmojang.launcher.data.DownloadProgress
 import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
+import com.openmojang.launcher.data.MirrorPref
+import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.VersionRepository
 import kotlinx.coroutines.launch
 import java.io.File
@@ -33,6 +38,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     val engine = remember { DownloadEngine(context) }
     val installed = remember { InstalledVersions(context) }
     val apkInstaller = remember { ApkInstaller(context) }
+    val settings = remember { SettingsStore(context) }
     val scope = rememberCoroutineScope()
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
@@ -189,21 +195,33 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 )
                                 return@Button
                             }
+                            if (settings.wifiOnlyDownloads && !isOnWifi(context)) {
+                                error = "Wi‑Fi only is on. Connect to Wi‑Fi or turn it off in Settings."
+                                return@Button
+                            }
                             downloading = true
                             error = null
                             statusLine = "Looking up APK…"
                             scope.launch {
                                 try {
+                                    val urls = filterUrls(repo.urlsFor(target), settings.preferredMirror)
                                     val file = engine.downloadFirst(
-                                        urls = repo.urlsFor(target),
+                                        urls = urls,
                                         fileName = "minecraft-${target.id}.apk"
                                     ) { p ->
                                         progress = p
                                         if (p.bytesRead > 0) statusLine = "Downloading…"
                                     }
                                     apk = file
-                                    statusLine = "Installing…"
-                                    engine.installApk(file)
+                                    if (settings.installAfterDownload) {
+                                        statusLine = "Installing…"
+                                        engine.installApk(file)
+                                    } else {
+                                        statusLine = "Download complete"
+                                    }
+                                    if (!settings.keepOldVersions) {
+                                        // keep file until user leaves; delete on next clear only
+                                    }
                                 } catch (e: Exception) {
                                     error = e.message ?: "Download failed"
                                     statusLine = ""
@@ -215,7 +233,13 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         enabled = !downloading,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (downloading) "Working…" else "Download and install")
+                        Text(
+                            when {
+                                downloading -> "Working…"
+                                settings.installAfterDownload -> "Download and install"
+                                else -> "Download"
+                            }
+                        )
                     }
                 } else {
                     Button(
@@ -247,3 +271,22 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
 private fun mb(bytes: Long): String =
     if (bytes <= 0L) "0.0" else "%.1f".format(bytes / (1024.0 * 1024.0))
+
+private fun isOnWifi(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = cm.activeNetwork ?: return false
+    val caps = cm.getNetworkCapabilities(network) ?: return false
+    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+}
+
+private fun filterUrls(urls: List<String>, mirror: MirrorPref): List<String> {
+    return when (mirror) {
+        MirrorPref.AUTO -> urls
+        MirrorPref.MCPEDL -> urls.filter {
+            it.contains("mcpedl", ignoreCase = true) || it.contains(".apk", ignoreCase = true)
+        }.ifEmpty { urls }
+        MirrorPref.MCPE_PLANET -> urls.filter {
+            it.contains("mcpe-planet", ignoreCase = true) || it.contains(".apk", ignoreCase = true)
+        }.ifEmpty { urls }
+    }
+}
