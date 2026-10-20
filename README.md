@@ -1,21 +1,20 @@
-# Open Mojang
+# Peak Launcher
 
 Unofficial Minecraft Bedrock launcher for Android.
 
-Download builds, manage versions, Microsoft account, skins. Looks like the official launcher.
+Download releases, **Minecraft Patch** builds, and betas. Manage account and skins.
 
 **v0.1.0**
 
 ## Build
 
-Open in Android Studio and run, or:
+Android Studio, or:
 
 ```bash
-gradle wrapper
 ./gradlew assembleDebug
 ```
 
-Needs JDK 17 and Android SDK 35.
+JDK 17, SDK 35.
 
 ## License
 
