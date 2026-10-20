@@ -3,6 +3,7 @@ package com.openmojang.launcher.ui.screens
 import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,12 +35,18 @@ fun SkinScreen(onBack: () -> Unit) {
     val manager = remember { SkinManager(context) }
     var skins by remember { mutableStateOf(manager.list()) }
     var message by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<LocalSkin?>(null) }
+    var renameText by remember { mutableStateOf("") }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val imported = manager.importFromUri(uri, "Skin ${skins.size}")
         skins = manager.list()
-        message = if (imported == null) "That file is not a 64x32 or 64x64 skin PNG" else "Imported ${imported.name}"
+        message = if (imported == null) {
+            "Need a classic skin PNG (64×64 or 64×32, or HD multiples)"
+        } else {
+            "Imported ${imported.name}"
+        }
     }
 
     val active = skins.firstOrNull { it.active }
@@ -54,7 +62,7 @@ fun SkinScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { picker.launch("image/*") }) {
+                    IconButton(onClick = { picker.launch("image/png") }) {
                         Icon(Icons.Filled.Add, contentDescription = "Import skin")
                     }
                 }
@@ -62,7 +70,7 @@ fun SkinScreen(onBack: () -> Unit) {
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { picker.launch("image/*") },
+                onClick = { picker.launch("image/png") },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text("Import PNG") }
             )
@@ -84,29 +92,103 @@ fun SkinScreen(onBack: () -> Unit) {
                 )
             }
             Text(
-                "Classic 64×64 or 64×32 PNG. Selected skin is stored on this device.",
+                "Classic 64×64 or 64×32 PNG. Active skin is stored on this device.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(skins, key = { it.id }) { skin ->
-                    SkinRow(
-                        skin = skin,
-                        manager = manager,
-                        onSelect = {
-                            manager.setActive(skin.id)
-                            skins = manager.list()
-                            message = "Using ${skin.name}"
-                        },
-                        onDelete = {
-                            manager.delete(skin.id)
-                            skins = manager.list()
+                    ElevatedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                manager.setActive(skin.id)
+                                skins = manager.list()
+                                message = "Using ${skin.name}"
+                            },
+                        colors = CardDefaults.elevatedCardColors(
+                            containerColor = if (skin.active) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val head = manager.headBitmap(skin)
+                            if (head != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = head.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp).clip(CircleShape)
+                                )
+                            } else {
+                                Icon(Icons.Outlined.Face, contentDescription = null, modifier = Modifier.size(40.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(skin.name, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    when {
+                                        skin.active -> "Selected"
+                                        skin.isSteve -> "Default"
+                                        else -> "Tap to use"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (!skin.isSteve) {
+                                IconButton(onClick = {
+                                    renameTarget = skin
+                                    renameText = skin.name
+                                }) {
+                                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                                }
+                                IconButton(onClick = {
+                                    manager.delete(skin.id)
+                                    skins = manager.list()
+                                    message = "Deleted ${skin.name}"
+                                }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                                }
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename skin") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text("Name") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (manager.rename(target.id, renameText)) {
+                        skins = manager.list()
+                        message = "Renamed"
+                    }
+                    renameTarget = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -123,20 +205,20 @@ private fun SkinPreview(skin: LocalSkin?, manager: SkinManager) {
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             when {
+                skin != null && skin.path.isNotEmpty() && File(skin.path).exists() && head != null -> {
+                    androidx.compose.foundation.Image(
+                        bitmap = head.asImageBitmap(),
+                        contentDescription = skin.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                }
                 skin != null && skin.path.isNotEmpty() && File(skin.path).exists() -> {
                     AsyncImage(
                         model = File(skin.path),
                         contentDescription = skin.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
-                    )
-                }
-                head != null -> {
-                    androidx.compose.foundation.Image(
-                        bitmap = head.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
                     )
                 }
                 else -> {
@@ -155,53 +237,5 @@ private fun SkinPreview(skin: LocalSkin?, manager: SkinManager) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-}
-
-@Composable
-private fun SkinRow(
-    skin: LocalSkin,
-    manager: SkinManager,
-    onSelect: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val head = manager.headBitmap(skin)
-    ListItem(
-        headlineContent = { Text(skin.name) },
-        supportingContent = { Text(if (skin.active) "Selected" else "Tap to use") },
-        leadingContent = {
-            if (head != null) {
-                androidx.compose.foundation.Image(
-                    bitmap = head.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp).clip(CircleShape)
-                )
-            } else {
-                Icon(Icons.Outlined.Face, contentDescription = null)
-            }
-        },
-        trailingContent = {
-            if (!skin.isSteve) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete")
-                }
-            }
-        },
-        modifier = Modifier.fillMaxWidth(),
-        colors = ListItemDefaults.colors(
-            containerColor = if (skin.active) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
-        tonalElevation = 1.dp
-    )
-    // ListItem has no click in older M3 — overlay via Surface click
-    // Use a clickable card instead if ListItem click is missing.
-    // Fallback: whole row is not clickable via ListItem on older BOM.
-    // Wrap was hard; add a text button row under if needed.
-    TextButton(onClick = onSelect, modifier = Modifier.padding(start = 56.dp)) {
-        Text(if (skin.active) "Selected" else "Use this skin")
     }
 }
