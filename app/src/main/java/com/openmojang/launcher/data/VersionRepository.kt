@@ -187,9 +187,25 @@ class VersionRepository {
     fun findByInstalled(versionName: String?): McVersion? {
         if (versionName.isNullOrBlank()) return null
         val cleaned = versionName.trim()
-        return catalog.firstOrNull { it.patch == cleaned }
-            ?: catalog.firstOrNull { cleaned.startsWith(it.patch) || it.patch.startsWith(cleaned) }
-            ?: catalog.firstOrNull { cleaned.contains(it.id) || it.name in cleaned }
+        // Exact
+        catalog.firstOrNull { it.patch.equals(cleaned, true) || it.name.equals(cleaned, true) }
+            ?.let { return it }
+        // System often reports 1.26.70.20 — match catalog patch/name/id
+        catalog.firstOrNull { v ->
+            cleaned.contains(v.patch) || v.patch.contains(cleaned) ||
+                cleaned.contains(v.name) || cleaned.contains(v.id) ||
+                cleaned.replace("1.", "").contains(v.id)
+        }?.let { return it }
+        // Best numeric match
+        return catalog.maxWithOrNull(
+            compareBy<
+                McVersion
+                > { UpdateChecker.compareVersionStrings(cleaned, it.patch.ifBlank { it.name }) == 0 }
+                .thenBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }).size }
+        )?.takeIf {
+            UpdateChecker.compareVersionStrings(cleaned, it.patch.ifBlank { it.name }) == 0 ||
+                cleaned.contains(it.id)
+        }
     }
 
     fun urlsFor(version: McVersion): List<String> {
@@ -203,10 +219,14 @@ class VersionRepository {
     }
 
     fun latestStable(): McVersion? =
-        catalog.firstOrNull { it.type == "patch" }
-            ?: catalog.firstOrNull { it.type == "release" }
+        catalog.filter { it.type == "release" || it.type == "patch" }
+            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
 
-    fun latestBeta(): McVersion? = catalog.firstOrNull { it.type == "beta" }
+    fun latestBeta(): McVersion? =
+        catalog.filter { it.type == "beta" }
+            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
 
-    fun latestPatch(): McVersion? = catalog.firstOrNull { it.type == "patch" }
+    fun latestPatch(): McVersion? =
+        catalog.filter { it.type == "patch" }
+            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
 }
