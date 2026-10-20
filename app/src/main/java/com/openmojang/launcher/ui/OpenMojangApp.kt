@@ -10,8 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -19,7 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.openmojang.launcher.data.VersionRepository
+import com.openmojang.launcher.data.UpdateChecker
 import com.openmojang.launcher.ui.screens.*
 import com.openmojang.launcher.ui.theme.*
 
@@ -58,17 +61,19 @@ fun HomeScreen(
     onSkins: () -> Unit,
     onSettings: () -> Unit
 ) {
-    val repo = remember { VersionRepository() }
+    val context = LocalContext.current
+    val checker = remember { UpdateChecker(context) }
     var status by remember { mutableStateOf("Checking…") }
 
     LaunchedEffect(Unit) {
-        val list = repo.getVersions()
-        val stable = list.firstOrNull { it.type == "release" }
-        val beta = list.firstOrNull { it.type == "beta" }
+        val u = checker.check()
         status = when {
-            stable != null && beta != null ->
-                "Ready · Stable ${stable.name} · Beta ${beta.name}"
-            stable != null -> "Ready · Latest ${stable.name}"
+            u.installed == null && u.latestStable != null ->
+                "Minecraft not installed · Latest ${u.latestStable.name}"
+            u.updateAvailable && u.latestStable != null ->
+                "Update available · ${u.latestStable.name} (you have ${u.installed})"
+            u.installed != null && u.latestStable != null ->
+                "Up to date · ${u.installed} · Beta ${u.latestBeta?.name ?: "—"}"
             else -> "Ready · Catalog loaded"
         }
     }
@@ -97,9 +102,9 @@ fun HomeScreen(
                     fontWeight = FontWeight.Black,
                     color = TextLight,
                     style = LocalTextStyle.current.copy(
-                        shadow = androidx.compose.ui.graphics.Shadow(
+                        shadow = Shadow(
                             color = TextShadow,
-                            offset = androidx.compose.ui.geometry.Offset(3f, 3f),
+                            offset = Offset(3f, 3f),
                             blurRadius = 0f
                         )
                     )
@@ -112,7 +117,7 @@ fun HomeScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Open Mojang Launcher",
+                    text = "Open Mojang · v0.1.0",
                     fontSize = 12.sp,
                     color = TextLight.copy(alpha = 0.7f)
                 )
@@ -166,9 +171,9 @@ fun MinecraftButton(
             fontWeight = FontWeight.Bold,
             color = TextLight,
             style = LocalTextStyle.current.copy(
-                shadow = androidx.compose.ui.graphics.Shadow(
+                shadow = Shadow(
                     color = TextShadow,
-                    offset = androidx.compose.ui.geometry.Offset(1.5f, 1.5f),
+                    offset = Offset(1.5f, 1.5f),
                     blurRadius = 0f
                 )
             )
