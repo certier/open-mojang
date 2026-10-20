@@ -26,7 +26,6 @@ class SettingsStore(private val context: Context) {
         }.getOrDefault(AbiPref.AUTO)
         set(value) = prefs.edit().putString(KEY_ABI, value.name).apply()
 
-    /** Default WITH_MUSIC — full game unless the user picks slim. */
     var preferredMusic: MusicPref
         get() = runCatching {
             MusicPref.valueOf(prefs.getString(KEY_MUSIC, MusicPref.WITH_MUSIC.name) ?: MusicPref.WITH_MUSIC.name)
@@ -54,6 +53,11 @@ class SettingsStore(private val context: Context) {
     var wifiOnly: Boolean
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+
+    /** Alias used by older DownloadEngine call sites */
+    var wifiOnlyDownloads: Boolean
+        get() = wifiOnly
+        set(value) { wifiOnly = value }
 
     fun cacheBytes(): Long {
         val dir = downloadDir()
