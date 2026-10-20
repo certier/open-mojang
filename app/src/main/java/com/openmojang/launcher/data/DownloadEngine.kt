@@ -53,9 +53,39 @@ class DownloadEngine(private val context: Context) {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    init {
+        purgeIncomplete()
+    }
+
+    /** Only return a finished, valid APK. Incomplete / bad files are deleted. */
     fun cached(fileName: String): File? {
-        val file = File(downloadDir(), fileName)
-        return if (file.exists() && file.length() > 5_000_000L) file else null
+        val dir = downloadDir()
+        // kill leftover partials for this name
+        File(dir, "$fileName.part").delete()
+        val file = File(dir, fileName)
+        if (!file.exists()) return null
+        if (!isGoodApk(file)) {
+            file.delete()
+            return null
+        }
+        return file
+    }
+
+    /** Remove every .part and any final file that fails APK checks. */
+    fun purgeIncomplete(): Int {
+        val dir = downloadDir()
+        var n = 0
+        dir.listFiles()?.forEach { f ->
+            when {
+                f.name.endsWith(".part") -> {
+                    if (f.delete()) n++
+                }
+                f.name.endsWith(".apk", ignoreCase = true) && !isGoodApk(f) -> {
+                    if (f.delete()) n++
+                }
+            }
+        }
+        return n
     }
 
     suspend fun downloadFirst(
@@ -63,6 +93,11 @@ class DownloadEngine(private val context: Context) {
         fileName: String,
         onProgress: (DownloadProgress) -> Unit = {}
     ): File {
+        // Never keep a half-written final name from a previous crash
+        File(downloadDir(), "$fileName.part").delete()
+        val existing = File(downloadDir(), fileName)
+        if (existing.exists() && !isGoodApk(existing)) existing.delete()
+
         val errors = mutableListOf<String>()
         val directFirst = urls.filter { it.contains(".apk", ignoreCase = true) } +
             urls.filter { !it.contains(".apk", ignoreCase = true) }
@@ -71,6 +106,8 @@ class DownloadEngine(private val context: Context) {
             try {
                 return downloadApk(url, fileName, onProgress)
             } catch (e: Exception) {
+                // ensure no partial survives a failed mirror
+                File(downloadDir(), "$fileName.part").delete()
                 errors += "${url.take(64)} → ${e.message}"
                 onProgress(DownloadProgress(0f, 0, 0))
             }
@@ -110,27 +147,69 @@ class DownloadEngine(private val context: Context) {
                 throw IllegalStateException("Got HTML instead of APK")
             }
             val total = body.contentLength()
-            val outFile = File(downloadDir(), fileName)
-            if (outFile.exists()) outFile.delete()
-            body.byteStream().use { input ->
-                FileOutputStream(outFile).use { output ->
-                    val buffer = ByteArray(256 * 1024)
-                    var downloaded = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read == -1) break
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        val fraction = if (total > 0) downloaded.toFloat() / total else 0f
-                        onProgress(DownloadProgress(fraction, downloaded, total))
+            val dir = downloadDir()
+            val partFile = File(dir, "$fileName.part")
+            val finalFile = File(dir, fileName)
+            if (partFile.exists()) partFile.delete()
+
+            try {
+                body.byteStream().use { input ->
+                    FileOutputStream(partFile).use { output ->
+                        val buffer = ByteArray(256 * 1024)
+                        var downloaded = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            val fraction = if (total > 0) downloaded.toFloat() / total else 0f
+                            onProgress(DownloadProgress(fraction, downloaded, total))
+                        }
+                        output.flush()
                     }
                 }
+
+                if (!isGoodApk(partFile)) {
+                    partFile.delete()
+                    throw IllegalStateException(
+                        "Incomplete or invalid APK (${partFile.length()} B)"
+                    )
+                }
+
+                // Promote only after validation
+                if (finalFile.exists()) finalFile.delete()
+                if (!partFile.renameTo(finalFile)) {
+                    partFile.copyTo(finalFile, overwrite = true)
+                    partFile.delete()
+                }
+                if (!isGoodApk(finalFile)) {
+                    finalFile.delete()
+                    throw IllegalStateException("Final APK failed validation")
+                }
+                return finalFile
+            } catch (e: Exception) {
+                partFile.delete()
+                // never leave a bad final from this attempt
+                if (finalFile.exists() && !isGoodApk(finalFile)) finalFile.delete()
+                throw e
             }
-            if (outFile.length() < 5_000_000L) {
-                outFile.delete()
-                throw IllegalStateException("File too small (${outFile.length()} B)")
+        }
+    }
+
+    private fun isGoodApk(file: File): Boolean {
+        if (!file.exists() || file.length() < MIN_APK_BYTES) return false
+        return try {
+            file.inputStream().use { input ->
+                val header = ByteArray(4)
+                val n = input.read(header)
+                n == 4 &&
+                    header[0] == 0x50.toByte() &&
+                    header[1] == 0x4B.toByte() &&
+                    header[2] == 0x03.toByte() &&
+                    header[3] == 0x04.toByte()
             }
-            return outFile
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -233,6 +312,10 @@ class DownloadEngine(private val context: Context) {
     }
 
     fun installApk(apkFile: File) {
+        if (!isGoodApk(apkFile)) {
+            apkFile.delete()
+            throw IllegalStateException("APK is incomplete or corrupt")
+        }
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -249,6 +332,7 @@ class DownloadEngine(private val context: Context) {
         File(context.getExternalFilesDir(null), "Download").apply { mkdirs() }
 
     companion object {
+        private const val MIN_APK_BYTES = 5_000_000L
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
