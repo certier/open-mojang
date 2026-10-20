@@ -14,7 +14,6 @@ import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
@@ -92,14 +91,15 @@ fun HomeScreen(
         if (settings.autoCheckUpdates) {
             val u = checker.check()
             updateAvailable = u.updateAvailable
-            latestName = u.latestStable?.name
+            latestName = u.latestStable?.displayName
             status = when {
                 u.installed == null && u.latestStable != null ->
-                    "Not installed · latest ${u.latestStable.name}"
+                    "Not installed · latest ${u.latestStable.displayName}"
                 u.updateAvailable && u.latestStable != null ->
-                    "Update ${u.latestStable.name} · installed ${u.installed}"
+                    "Update ${u.latestStable.displayName} · installed ${u.installed}"
                 u.installed != null ->
-                    "Up to date · ${u.installed}"
+                    "Up to date · ${u.installed}" +
+                        (u.installedMatch?.let { " (${it.displayName})" } ?: "")
                 else -> "Catalog ready"
             }
         } else {
@@ -137,7 +137,6 @@ fun HomeScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // Status + update
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Status", style = MaterialTheme.typography.labelLarge)
@@ -155,7 +154,6 @@ fun HomeScreen(
                 }
             }
 
-            // Play Minecraft
             Button(
                 onClick = {
                     launchError = null
@@ -174,11 +172,7 @@ fun HomeScreen(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
 
-            // Account row
-            ElevatedCard(
-                onClick = onAccount,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            ElevatedCard(onClick = onAccount, modifier = Modifier.fillMaxWidth()) {
                 ListItem(
                     headlineContent = { Text(accountName ?: "Microsoft account") },
                     supportingContent = {
@@ -190,11 +184,7 @@ fun HomeScreen(
                 )
             }
 
-            // Skin row
-            ElevatedCard(
-                onClick = onSkins,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            ElevatedCard(onClick = onSkins, modifier = Modifier.fillMaxWidth()) {
                 ListItem(
                     headlineContent = { Text(skinName) },
                     supportingContent = { Text("Active skin") },
@@ -213,16 +203,10 @@ fun HomeScreen(
                 )
             }
 
-            // Versions + cache
-            ElevatedCard(
-                onClick = onVersions,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            ElevatedCard(onClick = onVersions, modifier = Modifier.fillMaxWidth()) {
                 ListItem(
                     headlineContent = { Text("Versions") },
-                    supportingContent = {
-                        Text("Downloads · cache $cacheMb")
-                    },
+                    supportingContent = { Text("Downloads · cache $cacheMb") },
                     leadingContent = {
                         Icon(Icons.Outlined.Download, contentDescription = null)
                     },
