@@ -22,8 +22,8 @@ class VersionRepository {
         McVersion("26.60.30", "1.26.60.30", "beta", "6 Oct 2026", 515,
             "Touch stutter fixed, achievements restored, Realms upload speed.",
             "https://mcpedl.org/minecraft-pe-26-60-30-apk/"),
-        McVersion("26.52", "1.26.52", "release", "28 Sep 2026", 510,
-            "Stability after Wilderness Bound, Realms UI, accessibility, mid-range performance.",
+        McVersion("26.52", "1.26.52", "release", "28 Sep 2026", 370,
+            "Hotfix: Spectator projectiles, Cushion reload, Marketplace achievements, invisible items.",
             "https://mcpedl.org/minecraft-pe-26-52-apk/"),
         McVersion("26.51", "1.26.51", "release", "22 Sep 2026", 508,
             "Hotfix on Wilderness Bound.",
@@ -39,16 +39,21 @@ class VersionRepository {
             "https://mcpedl.org/minecraft-pe-26-10-apk/")
     )
 
+    /** Known working direct APKs — tried before any HTML scrape. */
+    private val directApk = mapOf(
+        "26.52" to "https://file.mcpedl.org/uploads_files/28-09-2026/minecraft-26-52-arm64-v8a.apk"
+    )
+
     suspend fun getVersions(): List<McVersion> = withContext(Dispatchers.IO) { catalog }
 
     fun urlsFor(version: McVersion): List<String> {
         val slug = version.id.replace('.', '-')
-        return listOf(
-            version.downloadUrl,
-            "https://mcpedl.org/minecraft-pe-$slug-apk/",
-            "https://mcpe-planet.com/minecraft-pe-$slug-apk/",
-            "https://mcpe-planet.com/downloads/"
-        ).distinct()
+        val list = mutableListOf<String>()
+        directApk[version.id]?.let { list += it }
+        list += version.downloadUrl
+        list += "https://mcpedl.org/minecraft-pe-$slug-apk/"
+        list += "https://mcpe-planet.com/minecraft-pe-$slug-apk/"
+        return list.distinct()
     }
 
     fun latestStable(): McVersion? = catalog.firstOrNull { it.type == "release" }
