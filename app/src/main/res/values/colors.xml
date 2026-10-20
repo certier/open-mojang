@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0B1220</color>
-    <color name="peak_indigo">#1A237E</color>
-    <color name="peak_blue">#3D5AFE</color>
-    <color name="peak_gold">#FFC107</color>
-    <color name="peak_sky">#82B1FF</color>
+    <color name="ic_launcher_background">#3E0A0A</color>
+    <color name="maple_red">#B71C1C</color>
+    <color name="maple_amber">#FF8F00</color>
+    <color name="maple_gold">#FFC107</color>
+    <color name="maple_cream">#FFF3E0</color>
 </resources>
