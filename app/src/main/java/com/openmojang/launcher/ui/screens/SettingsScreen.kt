@@ -239,7 +239,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("Open Mojang", style = MaterialTheme.typography.titleMedium)
+                            Text("Peak Launcher", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 "v0.1.0",
                                 style = MaterialTheme.typography.bodySmall,
