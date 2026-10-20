@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.openmojang.launcher.data.McVersion
@@ -71,13 +72,23 @@ fun coverTag(version: McVersion): String = when (version.cover) {
     else -> version.typeLabel
 }
 
-fun screenshotCaptions(version: McVersion): List<String> = when (version.cover) {
-    "ice" -> listOf("Ice Caves", "Frostbite", "Brittle ice")
-    "patch" -> listOf("Stability", "Realms fix", "Combat")
-    "forest" -> listOf("Dappled Forest", "Camps", "Sit pads")
-    "sulfur" -> listOf("Sulfur caves", "Cinnabar", "Sulfur cube")
-    "grass" -> listOf("Baby mobs", "Dandelions", "Name tags")
-    else -> listOf("World", "Gameplay", "Fixes")
+/** Pull short highlights from changelog so screenshots show what this update adds. */
+fun screenshotCaptions(version: McVersion): List<String> {
+    val fromLog = version.changelog
+        .lineSequence()
+        .map { it.trim().removePrefix("-").removePrefix("•").trim() }
+        .filter { it.length in 4..48 }
+        .take(4)
+        .toList()
+    if (fromLog.isNotEmpty()) return fromLog
+    return when (version.cover) {
+        "ice" -> listOf("Ice Caves", "Frostbite", "Brittle ice")
+        "patch" -> listOf("Stability", "Realms fix", "Combat")
+        "forest" -> listOf("Dappled Forest", "Camps", "Sit pads")
+        "sulfur" -> listOf("Sulfur caves", "Cinnabar", "Sulfur cube")
+        "grass" -> listOf("Baby mobs", "Dandelions", "Name tags")
+        else -> listOf("World", "Gameplay", "Fixes")
+    }
 }
 
 @Composable
@@ -138,15 +149,23 @@ fun VersionScreenshotStrip(
     version: McVersion,
     modifier: Modifier = Modifier
 ) {
-    val captions = remember(version.id, version.cover) { screenshotCaptions(version) }
+    val captions = remember(version.id, version.cover, version.changelog) {
+        screenshotCaptions(version)
+    }
     val p = remember(version.cover) { paletteFor(version.cover) }
-    val borderColor = MaterialTheme.colorScheme.outlineVariant
+    val borderColor = MaterialTheme.colorScheme.outline
 
     Column(modifier.fillMaxWidth()) {
         Text(
-            "Screenshots",
+            "What's new in this update",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Text(
+            "Swipe cards · each card is a highlight from the changelog",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 10.dp)
         )
         Row(
@@ -160,6 +179,7 @@ fun VersionScreenshotStrip(
                     cover = version.cover,
                     palette = p,
                     caption = caption,
+                    indexLabel = "${index + 1}/${captions.size}",
                     variant = index,
                     borderColor = borderColor
                 )
@@ -173,41 +193,54 @@ private fun ScreenshotCard(
     cover: String,
     palette: CoverPalette,
     caption: String,
+    indexLabel: String,
     variant: Int,
     borderColor: Color
 ) {
-    Column(Modifier.width(180.dp)) {
+    Column(Modifier.width(200.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(120.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+                .height(140.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(2.dp, borderColor, RoundedCornerShape(16.dp))
                 .background(Brush.verticalGradient(listOf(palette.top, palette.bottom)))
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawScene(cover, palette, variant)
             }
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 8.dp)
-                    .width(40.dp)
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color.Black.copy(alpha = 0.28f))
-            )
             Text(
-                caption,
-                style = MaterialTheme.typography.labelMedium,
+                indexLabel,
+                style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
-                fontWeight = FontWeight.Medium,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(10.dp)
-                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
             )
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    "NEW",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.accent,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    caption,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
