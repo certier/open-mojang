@@ -1,12 +1,18 @@
 package com.openmojang.launcher.ui.screens
 
+import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.openmojang.launcher.data.ApkInstaller
 import com.openmojang.launcher.data.DownloadEngine
 import com.openmojang.launcher.data.DownloadProgress
@@ -26,7 +33,7 @@ import com.openmojang.launcher.data.McVersion
 import com.openmojang.launcher.data.MirrorPref
 import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.VersionRepository
-import kotlinx.coroutines.launch
+import com.openmojang.launcher.download.DownloadService
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -39,7 +46,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     val installed = remember { InstalledVersions(context) }
     val apkInstaller = remember { ApkInstaller(context) }
     val settings = remember { SettingsStore(context) }
-    val scope = rememberCoroutineScope()
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
     var filter by remember { mutableStateOf("all") }
@@ -51,9 +57,80 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var apk by remember { mutableStateOf<File?>(null) }
 
+    val notifPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* proceed either way — notification is best-effort */ }
+
     LaunchedEffect(Unit) {
         versions = repo.getVersions()
         systemVer = installed.systemMinecraftVersion()
+        if (Build.VERSION.SDK_INT >= 33) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // Listen for service progress / complete / error
+    DisposableEffect(Unit) {
+        val filter = IntentFilter().apply {
+            addAction(DownloadService.ACTION_PROGRESS)
+            addAction(DownloadService.ACTION_COMPLETE)
+            addAction(DownloadService.ACTION_ERROR)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    DownloadService.ACTION_PROGRESS -> {
+                        val id = intent.getStringExtra(DownloadService.EXTRA_VERSION_ID)
+                        if (sheetVersion?.id != null && id != sheetVersion?.id) return
+                        val fraction = intent.getFloatExtra(DownloadService.EXTRA_FRACTION, 0f)
+                        val read = intent.getLongExtra(DownloadService.EXTRA_BYTES_READ, 0L)
+                        val total = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
+                        progress = DownloadProgress(fraction, read, total)
+                        downloading = true
+                        statusLine = if (read == 0L) "Resolving APK…" else "Downloading in background…"
+                        error = null
+                    }
+                    DownloadService.ACTION_COMPLETE -> {
+                        val id = intent.getStringExtra(DownloadService.EXTRA_VERSION_ID)
+                        if (sheetVersion?.id != null && id != sheetVersion?.id) return
+                        val path = intent.getStringExtra(DownloadService.EXTRA_PATH)
+                        val bytes = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
+                        apk = path?.let { File(it) }
+                        downloading = false
+                        statusLine = "Done · ${mb(bytes)} MB" +
+                            if (settings.installAfterDownload) " · install started" else ""
+                        progress = DownloadProgress(
+                            1f,
+                            bytes,
+                            bytes
+                        )
+                    }
+                    DownloadService.ACTION_ERROR -> {
+                        val id = intent.getStringExtra(DownloadService.EXTRA_VERSION_ID)
+                        if (sheetVersion?.id != null && id != sheetVersion?.id) return
+                        error = intent.getStringExtra(DownloadService.EXTRA_MESSAGE) ?: "Download failed"
+                        downloading = false
+                        statusLine = ""
+                    }
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     val shown = when (filter) {
@@ -110,8 +187,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         supportingContent = {
                             Text(
                                 buildString {
-                                    append("${v.type} · ${v.date} · ${v.sizeMb} MB")
-                                    if (cached != null) append(" · saved")
+                                    append("${v.type} · ${v.date} · ~${v.sizeMb} MB")
+                                    if (cached != null) {
+                                        append(" · saved ${mb(cached.length())} MB")
+                                    }
                                 }
                             )
                         },
@@ -136,7 +215,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     val target = sheetVersion
     if (target != null) {
         ModalBottomSheet(
-            onDismissRequest = { if (!downloading) sheetVersion = null }
+            onDismissRequest = { sheetVersion = null }
         ) {
             Column(
                 Modifier
@@ -145,6 +224,12 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     .navigationBarsPadding()
             ) {
                 Text(target.name, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${target.type} · ${target.date} · catalog ~${target.sizeMb} MB",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     target.changelog,
@@ -160,7 +245,9 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
                 if (downloading || progress.bytesRead > 0L) {
                     LinearProgressIndicator(
-                        progress = { if (progress.bytesTotal > 0) progress.fraction.coerceIn(0f, 1f) else 0f },
+                        progress = {
+                            if (progress.bytesTotal > 0) progress.fraction.coerceIn(0f, 1f) else 0f
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -169,9 +256,14 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     } else if (progress.bytesRead > 0) {
                         "${mb(progress.bytesRead)} MB"
                     } else {
-                        "Resolving download…"
+                        "Resolving…"
                     }
                     Text(label, style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "Runs in background — check the notification",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -199,49 +291,46 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 error = "Wi‑Fi only is on. Connect to Wi‑Fi or turn it off in Settings."
                                 return@Button
                             }
-                            downloading = true
-                            error = null
-                            statusLine = "Looking up APK…"
-                            scope.launch {
-                                try {
-                                    val urls = filterUrls(repo.urlsFor(target), settings.preferredMirror)
-                                    val file = engine.downloadFirst(
-                                        urls = urls,
-                                        fileName = "minecraft-${target.id}.apk"
-                                    ) { p ->
-                                        progress = p
-                                        if (p.bytesRead > 0) statusLine = "Downloading…"
-                                    }
-                                    apk = file
-                                    if (settings.installAfterDownload) {
-                                        statusLine = "Installing…"
-                                        engine.installApk(file)
-                                    } else {
-                                        statusLine = "Download complete"
-                                    }
-                                    if (!settings.keepOldVersions) {
-                                        // keep file until user leaves; delete on next clear only
-                                    }
-                                } catch (e: Exception) {
-                                    error = e.message ?: "Download failed"
-                                    statusLine = ""
-                                } finally {
-                                    downloading = false
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (!granted) {
+                                    notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 }
                             }
+                            downloading = true
+                            error = null
+                            statusLine = "Starting background download…"
+                            progress = DownloadProgress(0f, 0, 0)
+                            val urls = filterUrls(repo.urlsFor(target), settings.preferredMirror)
+                            DownloadService.start(
+                                context = context,
+                                versionId = target.id,
+                                versionName = target.name,
+                                sizeMb = target.sizeMb,
+                                urls = urls
+                            )
                         },
                         enabled = !downloading,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             when {
-                                downloading -> "Working…"
+                                downloading -> "Downloading…"
                                 settings.installAfterDownload -> "Download and install"
                                 else -> "Download"
                             }
                         )
                     }
                 } else {
+                    Text(
+                        "Saved ${mb(apk!!.length())} MB · expected ~${target.sizeMb} MB",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = {
                             try {
@@ -260,6 +349,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             apk = null
                             progress = DownloadProgress(0f, 0, 0)
                             statusLine = ""
+                            error = null
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Redownload") }
