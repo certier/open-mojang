@@ -8,8 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -22,8 +25,7 @@ data class DeviceCodeSession(
 )
 
 /**
- * Microsoft account via device code → Xbox Live → Minecraft services.
- * Uses the public Minecraft launcher client id (same family as other launchers).
+ * Microsoft account via device code → Xbox Live.
  */
 class AuthManager(private val context: Context) {
 
@@ -41,7 +43,6 @@ class AuthManager(private val context: Context) {
         store.clear()
     }
 
-    /** Start device code. User opens verificationUri and enters userCode. */
     suspend fun startDeviceCode(): Result<DeviceCodeSession> = withContext(Dispatchers.IO) {
         try {
             val body = FormBody.Builder()
@@ -79,7 +80,6 @@ class AuthManager(private val context: Context) {
         }
     }
 
-    /** Poll until user finishes device login, then exchange for Xbox + profile. */
     suspend fun pollDeviceCode(session: DeviceCodeSession): Result<MsAccount> =
         withContext(Dispatchers.IO) {
             val deadline = System.currentTimeMillis() + session.expiresIn * 1000L
@@ -112,14 +112,12 @@ class AuthManager(private val context: Context) {
             Result.failure(IllegalStateException("Device login timed out"))
         }
 
-    /** Opens the Microsoft link page in a browser. */
     fun openVerification(activity: Activity, uri: String) {
         activity.startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
 
-    /** Legacy entry used by AccountScreen — starts device flow message. */
     suspend fun signIn(activity: Activity): Result<MsAccount> = withContext(Dispatchers.Main) {
         val session = startDeviceCode().getOrElse {
             return@withContext Result.failure(it)
@@ -150,7 +148,6 @@ class AuthManager(private val context: Context) {
 
     private fun finishXbox(msAccess: String, refresh: String): Result<MsAccount> {
         return try {
-            // Xbox Live user token
             val rpsBody = JSONObject()
                 .put(
                     "Properties",
@@ -172,41 +169,29 @@ class AuthManager(private val context: Context) {
                 .getJSONObject(0)
                 .getString("uhs")
 
-            // XSTS for Xbox Live
             val xstsBody = JSONObject()
                 .put(
                     "Properties",
                     JSONObject()
                         .put("SandboxId", "RETAIL")
-                        .put("UserTokens", org.json.JSONArray().put(userToken))
+                        .put("UserTokens", JSONArray().put(userToken))
                 )
                 .put("RelyingParty", "http://xboxlive.com")
                 .put("TokenType", "JWT")
             val xsts = postJson("https://xsts.auth.xboxlive.com/xsts/authorize", xstsBody.toString())
             val xstsToken = xsts.getString("Token")
-            val gamertag = xsts
-                .getJSONObject("DisplayClaims")
-                .getJSONArray("xui")
-                .getJSONObject(0)
-                .optString("gtg", "Player")
-            val xid = xsts
-                .getJSONObject("DisplayClaims")
-                .getJSONArray("xui")
-                .getJSONObject(0)
-                .optString("xid", "")
+            val xui = xsts.getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0)
+            val gamertag = xui.optString("gtg", "Player")
+            val xid = xui.optString("xid", "")
 
             val account = MsAccount(
                 gamertag = gamertag.ifBlank { "Player" },
                 uuid = xid.ifBlank { uhs },
                 accessToken = "XBL3.0 x=$uhs;$xstsToken",
+                refreshToken = refresh,
                 skinUrl = ""
             )
-            // Store refresh for later
             store.save(account)
-            context.getSharedPreferences("ms_auth", Context.MODE_PRIVATE)
-                .edit()
-                .putString("refresh", refresh)
-                .apply()
             Result.success(account)
         } catch (e: Exception) {
             Result.failure(e)
@@ -214,9 +199,10 @@ class AuthManager(private val context: Context) {
     }
 
     private fun postJson(url: String, json: String): JSONObject {
+        val media = "application/json".toMediaType()
         val req = Request.Builder()
             .url(url)
-            .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), json))
+            .post(json.toRequestBody(media))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .header("x-xbl-contract-version", "1")
@@ -231,7 +217,6 @@ class AuthManager(private val context: Context) {
     }
 
     companion object {
-        /** Minecraft Launcher public client id */
         const val CLIENT_ID = "00000000402b5328"
         const val SCOPE = "XboxLive.signin offline_access"
     }

@@ -72,22 +72,46 @@ fun coverTag(version: McVersion): String = when (version.cover) {
     else -> version.typeLabel
 }
 
-/** Pull short highlights from changelog so screenshots show what this update adds. */
+/**
+ * Build screenshot captions from real changelog bullets so each card shows
+ * what this update actually added — not generic art labels.
+ */
 fun screenshotCaptions(version: McVersion): List<String> {
+    val sectionHeaders = setOf(
+        "world", "gameplay", "experimental", "fixes", "combat", "items",
+        "hotfix", "stability", "realms", "preview", "beta"
+    )
     val fromLog = version.changelog
         .lineSequence()
-        .map { it.trim().removePrefix("-").removePrefix("•").trim() }
-        .filter { it.length in 4..48 }
+        .map { it.trim() }
+        .map { line ->
+            line.removePrefix("•")
+                .removePrefix("-")
+                .removePrefix("*")
+                .removePrefix("|")
+                .trim()
+        }
+        .filter { line ->
+            val lower = line.lowercase()
+            line.length in 10..64 &&
+                !lower.startsWith("minecraft ") &&
+                !line.endsWith(":") &&
+                lower !in sectionHeaders &&
+                !lower.startsWith("what minecraft")
+        }
+        .distinct()
         .take(4)
         .toList()
+
     if (fromLog.isNotEmpty()) return fromLog
+
     return when (version.cover) {
-        "ice" -> listOf("Ice Caves", "Frostbite", "Brittle ice")
-        "patch" -> listOf("Stability", "Realms fix", "Combat")
-        "forest" -> listOf("Dappled Forest", "Camps", "Sit pads")
-        "sulfur" -> listOf("Sulfur caves", "Cinnabar", "Sulfur cube")
+        "ice" -> listOf("Ice Caves", "Frostbite mobs", "Brittle ice floors")
+        "patch" -> listOf("Stability fixes", "Realms improvements", "Combat fixes")
+        "forest" -> listOf("Dappled Forest", "Camp structures", "Sit pads")
+        "sulfur" -> listOf("Sulfur caves", "Cinnabar ore", "Sulfur cube")
         "grass" -> listOf("Baby mobs", "Dandelions", "Name tags")
-        else -> listOf("World", "Gameplay", "Fixes")
+        else -> listOf("World changes", "Gameplay", "Bug fixes")
     }
 }
 
@@ -163,7 +187,7 @@ fun VersionScreenshotStrip(
             modifier = Modifier.padding(bottom = 4.dp)
         )
         Text(
-            "Swipe cards · each card is a highlight from the changelog",
+            "Each card is a real highlight from the changelog",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 10.dp)
