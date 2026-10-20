@@ -65,11 +65,10 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Microsoft Auth (MSAL)
-    implementation("com.microsoft.identity.client:msal:5.4.0")
-
     // Image loading for skins
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // MSAL deferred to post-0.1 (needs Duo SDK feed + Azure client ID)
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
