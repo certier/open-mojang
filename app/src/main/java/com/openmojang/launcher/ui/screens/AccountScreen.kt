@@ -13,8 +13,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.openmojang.launcher.data.AuthManager
 import com.openmojang.launcher.data.MsAccount
-import com.openmojang.launcher.ui.MinecraftButton
-import com.openmojang.launcher.ui.theme.*
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -29,20 +27,14 @@ fun AccountScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
-        containerColor = DirtDark,
         topBar = {
             TopAppBar(
-                title = { Text("Microsoft Account") },
+                title = { Text("Microsoft account") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SurfaceContainer,
-                    titleContentColor = TextLight,
-                    navigationIconContentColor = AccentGold
-                )
+                }
             )
         }
     ) { padding ->
@@ -54,46 +46,34 @@ fun AccountScreen(onBack: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(24.dp))
-
-            Surface(
-                color = SurfaceContainerHigh,
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.size(96.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(
-                        Icons.Filled.AccountCircle,
-                        contentDescription = null,
-                        tint = if (account != null) GrassLight else TextMuted,
-                        modifier = Modifier.size(64.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
+            Icon(
+                Icons.Filled.AccountCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(72.dp)
+            )
+            Spacer(Modifier.height(16.dp))
 
             when {
                 loading -> {
-                    CircularProgressIndicator(color = GrassGreen)
+                    CircularProgressIndicator()
                     Spacer(Modifier.height(12.dp))
-                    Text("Signing in…", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                    Text("Signing in…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 account == null -> {
                     Text(
                         "Sign in with the Microsoft account that owns Bedrock.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextMuted
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Demo mode until Azure client ID is set.",
+                        "Demo profile until an Azure client id is set.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextMuted.copy(alpha = 0.7f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(28.dp))
-                    MinecraftButton(
-                        text = "Sign in with Microsoft",
-                        primary = true,
+                    Spacer(Modifier.height(24.dp))
+                    Button(
                         onClick = {
                             loading = true
                             error = null
@@ -105,45 +85,32 @@ fun AccountScreen(onBack: () -> Unit) {
                                     return@launch
                                 }
                                 val result = auth.signIn(activity)
-                                result.onSuccess { account = it }
-                                    .onFailure { error = it.message }
+                                result.onSuccess { account = it }.onFailure { error = it.message }
                                 loading = false
                             }
-                        }
-                    )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Sign in") }
                     error?.let {
                         Spacer(Modifier.height(12.dp))
-                        Text(it, color = ErrorRed, style = MaterialTheme.typography.bodySmall)
+                        Text(it, color = MaterialTheme.colorScheme.error)
                     }
                 }
                 else -> {
-                    AssistChip(
-                        onClick = {},
-                        label = { Text("Signed in") },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = GrassDark,
-                            labelColor = GrassLight
-                        )
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        account!!.gamertag,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = TextLight
-                    )
+                    Text(account!!.gamertag, style = MaterialTheme.typography.headlineMedium)
                     Text(
                         account!!.uuid,
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextMuted
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(28.dp))
-                    MinecraftButton(
-                        text = "Sign Out",
+                    Spacer(Modifier.height(24.dp))
+                    OutlinedButton(
                         onClick = {
                             auth.signOut()
                             account = null
-                        }
-                    )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Sign out") }
                 }
             }
         }
