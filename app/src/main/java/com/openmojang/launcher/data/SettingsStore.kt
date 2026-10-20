@@ -6,6 +6,8 @@ import java.io.File
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class AbiPref { AUTO, ARM64, ARM32 }
 enum class MirrorPref { AUTO, MCPEDL, MCPE_PLANET }
+/** Mirrors often ship two APKs: full (with music) and slim (no music). */
+enum class MusicPref { AUTO, WITH_MUSIC, NO_MUSIC }
 
 class SettingsStore(context: Context) {
 
@@ -31,6 +33,13 @@ class SettingsStore(context: Context) {
             AbiPref.valueOf(prefs.getString(KEY_ABI, AbiPref.AUTO.name) ?: AbiPref.AUTO.name)
         }.getOrDefault(AbiPref.AUTO)
         set(value) = prefs.edit().putString(KEY_ABI, value.name).apply()
+
+    /** Prefer no-music by default — smaller download on mobile. */
+    var preferredMusic: MusicPref
+        get() = runCatching {
+            MusicPref.valueOf(prefs.getString(KEY_MUSIC, MusicPref.NO_MUSIC.name) ?: MusicPref.NO_MUSIC.name)
+        }.getOrDefault(MusicPref.NO_MUSIC)
+        set(value) = prefs.edit().putString(KEY_MUSIC, value.name).apply()
 
     var themeMode: ThemeMode
         get() = runCatching {
@@ -70,6 +79,7 @@ class SettingsStore(context: Context) {
         private const val KEY_KEEP_OLD = "keep_old"
         private const val KEY_MIRROR = "mirror"
         private const val KEY_ABI = "abi"
+        private const val KEY_MUSIC = "music"
         private const val KEY_THEME = "theme"
         private const val KEY_INSTALL_AFTER = "install_after"
         private const val KEY_WIFI_ONLY = "wifi_only"
