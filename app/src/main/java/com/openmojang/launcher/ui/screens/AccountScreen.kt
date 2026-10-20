@@ -12,7 +12,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.openmojang.launcher.data.AccountStore
 import com.openmojang.launcher.data.AuthManager
 import com.openmojang.launcher.data.DeviceCodeSession
 import com.openmojang.launcher.data.MsAccount
@@ -23,7 +22,6 @@ import kotlinx.coroutines.launch
 fun AccountScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { AuthManager(context) }
-    val store = remember { AccountStore(context) }
     val scope = rememberCoroutineScope()
 
     var account by remember { mutableStateOf<MsAccount?>(auth.current()) }
@@ -32,6 +30,14 @@ fun AccountScreen(onBack: () -> Unit) {
     var session by remember { mutableStateOf<DeviceCodeSession?>(null) }
     var editName by remember { mutableStateOf(account?.gamertag.orEmpty()) }
     var editing by remember { mutableStateOf(false) }
+
+    fun fail(t: Throwable) {
+        error = listOfNotNull(t.message, t.cause?.message)
+            .firstOrNull { !it.isNullOrBlank() }
+            ?: t.toString()
+        loading = false
+        session = null
+    }
 
     Scaffold(
         topBar = {
@@ -67,20 +73,22 @@ fun AccountScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         session!!.userCode,
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontFamily = FontFamily.Monospace
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         session!!.verificationUri,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(12.dp))
                     CircularProgressIndicator()
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "Waiting for you to finish in the browser…",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(12.dp))
@@ -105,7 +113,7 @@ fun AccountScreen(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Uses device code login (same pattern as Xbox / Minecraft launchers).",
+                        "Device code login — enter the code at microsoft.com/link",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -122,91 +130,76 @@ fun AccountScreen(onBack: () -> Unit) {
                                     loading = false
                                     return@launch
                                 }
-                                val started = auth.startDeviceCode()
-                                started.onSuccess { s ->
-                                    session = s
-                                    auth.openVerification(activity, s.verificationUri)
-                                    val result = auth.pollDeviceCode(s)
-                                    result.onSuccess {
-                                        account = it
-                                        editName = it.gamertag
-                                        session = null
-                                    }.onFailure { error = it.message }
-                                }.onFailure { error = it.message }
-                                loading = false
-                                session = null
+                                auth.startDeviceCode()
+                                    .onSuccess { s ->
+                                        session = s
+                                        auth.openVerification(activity, s.verificationUri)
+                                        auth.pollDeviceCode(s)
+                                            .onSuccess {
+                                                account = it
+                                                editName = it.gamertag
+                                                loading = false
+                                                session = null
+                                            }
+                                            .onFailure { fail(it) }
+                                    }
+                                    .onFailure { fail(it) }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Sign in with Microsoft") }
-                    error?.let {
-                        Spacer(Modifier.height(12.dp))
-                        Text(it, color = MaterialTheme.colorScheme.error)
-                    }
                 }
                 else -> {
+                    Text(account!!.gamertag, style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "ID ${account!!.uuid}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(16.dp))
                     if (editing) {
                         OutlinedTextField(
                             value = editName,
                             onValueChange = { editName = it },
                             label = { Text("Display name") },
-                            singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    val trimmed = editName.trim()
-                                    if (trimmed.isNotEmpty()) {
-                                        val updated = account!!.copy(gamertag = trimmed)
-                                        store.save(updated)
-                                        account = updated
-                                        editing = false
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Save") }
-                            OutlinedButton(
-                                onClick = {
-                                    editName = account!!.gamertag
-                                    editing = false
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Cancel") }
-                        }
-                    } else {
-                        Text(account!!.gamertag, style = MaterialTheme.typography.headlineMedium)
-                        Text(
-                            account!!.uuid,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Xbox Live signed in",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        OutlinedButton(
+                        Button(
                             onClick = {
-                                editName = account!!.gamertag
-                                editing = true
+                                val updated = account!!.copy(gamertag = editName.trim().ifBlank { account!!.gamertag })
+                                auth.current()
+                                com.openmojang.launcher.data.AccountStore(context).save(updated)
+                                account = updated
+                                editing = false
                             },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Save") }
+                    } else {
+                        OutlinedButton(
+                            onClick = { editing = true },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Edit display name") }
                     }
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
                         onClick = {
                             auth.signOut()
                             account = null
-                            editing = false
+                            editName = ""
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Sign out") }
                 }
+            }
+
+            error?.let {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
