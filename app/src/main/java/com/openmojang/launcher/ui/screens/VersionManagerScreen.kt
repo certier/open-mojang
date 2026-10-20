@@ -1,231 +1,183 @@
 package com.openmojang.launcher.ui.screens
 
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.openmojang.launcher.data.ApkInstaller
-import com.openmojang.launcher.data.ChangelogProvider
+import com.openmojang.launcher.data.DownloadEngine
+import com.openmojang.launcher.data.DownloadProgress
 import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
 import com.openmojang.launcher.data.VersionRepository
-import com.openmojang.launcher.ui.MinecraftButton
-import com.openmojang.launcher.ui.theme.*
+import kotlinx.coroutines.launch
+import java.io.File
+import kotlin.math.roundToInt
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VersionManagerScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val repo = remember { VersionRepository() }
+    val engine = remember { DownloadEngine(context) }
     val installed = remember { InstalledVersions(context) }
     val apkInstaller = remember { ApkInstaller(context) }
+    val scope = rememberCoroutineScope()
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
-    var selected by remember { mutableStateOf<McVersion?>(null) }
-    var status by remember { mutableStateOf("Loading catalog…") }
+    var filter by remember { mutableStateOf("all") }
     var systemVer by remember { mutableStateOf<String?>(null) }
-    var filter by remember { mutableStateOf("all") } // all | release | beta
+    var sheetVersion by remember { mutableStateOf<McVersion?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(DownloadProgress(0f, 0, 0)) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var apk by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(Unit) {
         versions = repo.getVersions()
         systemVer = installed.systemMinecraftVersion()
-        status = buildString {
-            append("Catalog · ${versions.size} builds")
-            if (systemVer != null) append(" · Installed $systemVer")
-            else append(" · Minecraft not installed")
-        }
     }
 
-    val filtered = when (filter) {
+    val shown = when (filter) {
         "release" -> versions.filter { it.type == "release" }
         "beta" -> versions.filter { it.type == "beta" }
         else -> versions
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DirtDark)
-            .padding(16.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = "← BACK",
-                color = AccentGold,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { onBack() }
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "VERSIONS",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-                color = TextLight
-            )
-            Spacer(Modifier.weight(1f))
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Text(text = status, color = TextLight.copy(alpha = 0.7f), fontSize = 13.sp)
-        Spacer(Modifier.height(8.dp))
-
-        // Filter chips
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip("ALL", filter == "all") { filter = "all" }
-            FilterChip("STABLE", filter == "release") { filter = "release" }
-            FilterChip("BETA", filter == "beta") { filter = "beta" }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        if (systemVer != null) {
-            MinecraftButton(
-                text = "Launch Installed Minecraft",
-                onClick = {
-                    val ok = installed.launchSystemMinecraft()
-                    if (!ok) status = "Could not launch Minecraft"
-                },
-                primary = true
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-
-        if (!apkInstaller.canRequestPackageInstalls()) {
-            Text(
-                text = "Allow install from this app →",
-                color = AccentGold,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable { apkInstaller.openUnknownSourcesSettings() }
-                    .padding(vertical = 4.dp)
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Text("Versions") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
             )
         }
-
-        Spacer(Modifier.height(4.dp))
-
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            items(filtered) { v ->
-                VersionCard(
-                    version = v,
-                    selected = selected?.id == v.id,
-                    onClick = { selected = v }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            systemVer?.let {
+                ListItem(
+                    headlineContent = { Text("Installed") },
+                    supportingContent = { Text(it) },
+                    trailingContent = {
+                        TextButton(onClick = { installed.launchSystemMinecraft() }) { Text("Open") }
+                    }
                 )
+                HorizontalDivider()
             }
-        }
-
-        selected?.let { v ->
-            Spacer(Modifier.height(12.dp))
-            val rich = ChangelogProvider.forVersion(v.id)
-            val body = if (rich.startsWith("No detailed")) v.changelog else rich
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DirtBrown),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 160.dp)
-            ) {
-                Column(
-                    Modifier
-                        .padding(12.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    Text(
-                        text = "What ${v.name} fixes / adds",
-                        fontWeight = FontWeight.Bold,
-                        color = AccentGold,
-                        fontSize = 14.sp
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(text = body, color = TextLight, fontSize = 13.sp)
+            if (!apkInstaller.canRequestPackageInstalls()) {
+                TextButton(onClick = { apkInstaller.openUnknownSourcesSettings() }) {
+                    Text("Allow this app to install apps")
                 }
             }
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = filter == "all", onClick = { filter = "all" }, label = { Text("All") })
+                FilterChip(selected = filter == "release", onClick = { filter = "release" }, label = { Text("Stable") })
+                FilterChip(selected = filter == "beta", onClick = { filter = "beta" }, label = { Text("Beta") })
+            }
+            LazyColumn {
+                items(shown, key = { it.id }) { v ->
+                    ListItem(
+                        headlineContent = { Text(v.name) },
+                        supportingContent = { Text("${v.type} · ${v.date} · ${v.sizeMb} MB") },
+                        leadingContent = { Icon(Icons.Outlined.Download, contentDescription = null) },
+                        trailingContent = {
+                            FilledTonalButton(onClick = {
+                                sheetVersion = v
+                                error = null
+                                apk = null
+                                progress = DownloadProgress(0f, 0, 0)
+                            }) { Text("Get") }
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
 
-            Spacer(Modifier.height(12.dp))
-            MinecraftButton(
-                text = "Open Download Page",
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(v.downloadUrl))
-                    context.startActivity(intent)
-                },
-                primary = true
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "After download, open the APK from Files or notifications to install.",
-                color = TextLight.copy(alpha = 0.5f),
-                fontSize = 11.sp
-            )
+    val target = sheetVersion
+    if (target != null) {
+        ModalBottomSheet(onDismissRequest = { if (!downloading) sheetVersion = null }) {
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+                Text(target.name, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    target.changelog,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+                if (downloading || progress.bytesRead > 0) {
+                    val label = if (progress.bytesTotal > 0) {
+                        "${(progress.fraction * 100).roundToInt()}% · ${mb(progress.bytesRead)} / ${mb(progress.bytesTotal)} MB"
+                    } else {
+                        "${mb(progress.bytesRead)} MB"
+                    }
+                    LinearProgressIndicator(
+                        progress = { if (progress.bytesTotal > 0) progress.fraction else 0f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(label, style = MaterialTheme.typography.labelLarge)
+                }
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            !context.packageManager.canRequestPackageInstalls()
+                        ) {
+                            error = "Allow installs from this app first"
+                            val intent = android.content.Intent(
+                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                android.net.Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                            return@Button
+                        }
+                        downloading = true
+                        error = null
+                        scope.launch {
+                            try {
+                                val file = engine.downloadApk("mc-${target.id}.apk".let { name ->
+                                    target.downloadUrl.let { url ->
+                                        engine.downloadApk(url, "mc-${target.id}.apk") { p -> progress = p }
+                                    }
+                                }.name) { }
+                                // unreachable — rewritten below
+                                apk = file
+                            } catch (e: Exception) {
+                                error = e.message ?: "Download failed"
+                            } finally {
+                                downloading = false
+                            }
+                        }
+                    },
+                    enabled = !downloading && apk == null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (downloading) "Downloading" else "Download")
+                }
+            }
         }
     }
 }
 
-@Composable
-private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (selected) GrassGreen else DirtBrown)
-            .border(1.dp, if (selected) GrassDark else ButtonBorder, RoundedCornerShape(4.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Text(label, color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun VersionCard(version: McVersion, selected: Boolean, onClick: () -> Unit) {
-    val borderColor = if (selected) AccentGold else ButtonBorder
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (selected) DirtBrown else DirtDark.copy(alpha = 0.8f))
-            .border(2.dp, borderColor, RoundedCornerShape(4.dp))
-            .clickable(onClick = onClick)
-            .padding(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = version.name,
-                    fontWeight = FontWeight.Bold,
-                    color = TextLight,
-                    fontSize = 16.sp
-                )
-                Text(
-                    text = "${version.type.uppercase()} · ${version.date} · ${version.sizeMb} MB",
-                    color = TextLight.copy(alpha = 0.6f),
-                    fontSize = 12.sp
-                )
-            }
-            if (version.type == "release") {
-                Text("STABLE", color = GrassGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            } else {
-                Text("BETA", color = AccentGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
+private fun mb(bytes: Long): String = "%.1f".format(bytes / (1024.0 * 1024.0))
