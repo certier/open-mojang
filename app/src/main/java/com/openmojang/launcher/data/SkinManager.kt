@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Environment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -44,6 +45,47 @@ class SkinManager(private val context: Context) {
 
     fun setActive(id: String) {
         activeFile.writeText(id)
+        // Best-effort push into Minecraft data folders
+        list().firstOrNull { it.id == id }?.let { applyToMinecraft(it) }
+    }
+
+    /**
+     * Copy skin PNG into known Bedrock custom-skin locations.
+     * Multiplayer persona still needs Microsoft; local/single may pick this up.
+     */
+    fun applyToMinecraft(skin: LocalSkin): String {
+        if (skin.isSteve || skin.path.isEmpty()) {
+            return "Default Steve — nothing to copy"
+        }
+        val src = File(skin.path)
+        if (!src.isFile) return "Skin file missing"
+
+        val targets = mutableListOf<File>()
+        Environment.getExternalStorageDirectory()?.let { root ->
+            targets += File(root, "games/com.mojang/minecraftpe/custom.png")
+            targets += File(root, "games/com.mojang/minecraftpe/skin.png")
+            targets += File(
+                root,
+                "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/custom.png"
+            )
+        }
+        // Always keep a copy under our external files for the user to move
+        targets += File(context.getExternalFilesDir(null), "minecraftpe/custom.png")
+
+        var wrote = 0
+        for (dest in targets.distinctBy { it.absolutePath }) {
+            try {
+                dest.parentFile?.mkdirs()
+                src.copyTo(dest, overwrite = true)
+                wrote++
+            } catch (_: Exception) {
+            }
+        }
+        return if (wrote > 0) {
+            "Copied skin to $wrote location(s). Restart Minecraft. Online persona may still use Microsoft skin."
+        } else {
+            "Could not write into Minecraft folders · enable All files access in system settings"
+        }
     }
 
     fun rename(id: String, newName: String): Boolean {
@@ -62,7 +104,6 @@ class SkinManager(private val context: Context) {
         return try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-            // Classic or slim HD skins: width multiple of 64, height 32 or 64 (or multiples)
             if (bitmap.width < 64 || bitmap.height < 32) return null
             if (bitmap.width % 64 != 0) return null
             val ratio = bitmap.height.toFloat() / bitmap.width
