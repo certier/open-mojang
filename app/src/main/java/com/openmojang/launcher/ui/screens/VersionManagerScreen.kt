@@ -1,5 +1,7 @@
 package com.openmojang.launcher.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,40 +14,34 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmojang.launcher.data.DownloadEngine
+import com.openmojang.launcher.data.McVersion
+import com.openmojang.launcher.data.VersionRepository
 import com.openmojang.launcher.ui.MinecraftButton
 import com.openmojang.launcher.ui.theme.*
-
-data class McVersion(
-    val id: String,
-    val name: String,
-    val type: String, // "release" or "beta"
-    val date: String,
-    val sizeMb: Int,
-    val changelog: String,
-    val downloadUrl: String = ""
-)
+import kotlinx.coroutines.launch
 
 @Composable
 fun VersionManagerScreen(onBack: () -> Unit) {
-    // Sample data – real engine will pull from mcpe-planet / mcpedl sources
-    val versions = remember {
-        listOf(
-            McVersion("26.70.20", "1.26.70.20", "beta", "13 Oct 2026", 520,
-                "Ice Caves Drop beta – Realms permission fixes, faster uploads, touch control stutter fixed."),
-            McVersion("26.52", "1.26.52", "release", "28 Sep 2026", 510,
-                "What Minecraft 26.52 fixes:\n• Stability improvements after Wilderness Bound\n• Realms interface polish\n• Accessibility and UI fixes\n• Performance on mid-range Android devices"),
-            McVersion("26.60.30", "1.26.60.30", "beta", "6 Oct 2026", 515,
-                "Touch control stutter fixed, achievements restored, Realms upload speed improved."),
-            McVersion("26.50", "1.26.50", "release", "15 Sep 2026", 505,
-                "Wilderness Bound drop – Dappled Forest, abandoned camps, sit pads, baby mob overhaul.")
-        )
-    }
+    val context = LocalContext.current
+    val repo = remember { VersionRepository() }
+    val engine = remember { DownloadEngine(context) }
+    val scope = rememberCoroutineScope()
 
+    var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
     var selected by remember { mutableStateOf<McVersion?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0f) }
+    var status by remember { mutableStateOf("Loading catalog…") }
+
+    LaunchedEffect(Unit) {
+        versions = repo.getVersions()
+        status = "Ready · ${versions.size} builds"
+    }
 
     Column(
         modifier = Modifier
@@ -53,7 +49,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             .background(DirtDark)
             .padding(16.dp)
     ) {
-        // Header
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
@@ -74,14 +69,8 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             Spacer(Modifier.weight(1f))
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            text = "Download any Mojang build. Latest first.",
-            color = TextLight.copy(alpha = 0.7f),
-            fontSize = 13.sp
-        )
-
+        Spacer(Modifier.height(12.dp))
+        Text(text = status, color = TextLight.copy(alpha = 0.7f), fontSize = 13.sp)
         Spacer(Modifier.height(12.dp))
 
         LazyColumn(
@@ -111,22 +100,38 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         fontSize = 14.sp
                     )
                     Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = v.changelog,
-                        color = TextLight,
-                        fontSize = 13.sp
-                    )
+                    Text(text = v.changelog, color = TextLight, fontSize = 13.sp)
                 }
+            }
+
+            if (downloading) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = GrassGreen,
+                    trackColor = DirtBrown
+                )
             }
 
             Spacer(Modifier.height(12.dp))
             MinecraftButton(
-                text = if (downloading) "Downloading…" else "Download & Install",
+                text = when {
+                    downloading -> "Downloading ${(progress * 100).toInt()}%"
+                    else -> "Open Download Page"
+                },
                 onClick = {
-                    // Real download engine goes here – OkHttp + PackageInstaller
-                    downloading = true
+                    // Open the mirror page (direct APK URLs rotate; page is stable)
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(v.downloadUrl))
+                    context.startActivity(intent)
                 },
                 primary = true
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Tip: after download finishes, open the APK from notifications or Files to install.",
+                color = TextLight.copy(alpha = 0.5f),
+                fontSize = 11.sp
             )
         }
     }
