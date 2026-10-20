@@ -22,17 +22,10 @@ class ApkInstaller(private val context: Context) {
     private val installed = InstalledVersions(context)
 
     /**
-     * @return true if install UI was shown or already installed (no-op).
+     * @return true if install UI was shown.
      */
     fun install(apk: File, expectedPackage: String = "com.mojang.minecraftpe"): Boolean {
         if (!apk.exists() || apk.length() < 1_000_000L) return false
-
-        // Already have Minecraft — don't spam the install sheet every time
-        if (installed.isSystemMinecraftInstalled()) {
-            // Still allow upgrade installs; skip only pure no-op when user re-taps
-            // Caller decides via versionLooksInstalled for Play vs Install.
-        }
-
         return try {
             installWithSession(apk)
         } catch (_: Exception) {
@@ -40,7 +33,6 @@ class ApkInstaller(private val context: Context) {
         }
     }
 
-    /** True when system Minecraft package is present. */
     fun isMinecraftInstalled(): Boolean = installed.isSystemMinecraftInstalled()
 
     fun minecraftVersionName(): String? = installed.systemMinecraftVersion()
@@ -55,8 +47,9 @@ class ApkInstaller(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 setInstallReason(PackageManager.INSTALL_REASON_USER)
             }
+            // Third-party apps must allow the system confirm sheet
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
             }
             setSize(apk.length())
         }
@@ -76,11 +69,9 @@ class ApkInstaller(private val context: Context) {
                 }
             }
 
-            val callback = Intent(context, InstallResultReceiver::class.java).apply {
-                action = ACTION_INSTALL_RESULT
-            }
+            val callback = Intent(context, InstallResultReceiver::class.java)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-                if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_MUTABLE else 0
+                if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
             val pi = PendingIntent.getBroadcast(context, sessionId, callback, flags)
             session.commit(pi.intentSender)
             return true
