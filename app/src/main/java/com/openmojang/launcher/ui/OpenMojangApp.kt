@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.openmojang.launcher.data.VersionRepository
 import com.openmojang.launcher.ui.screens.*
 import com.openmojang.launcher.ui.theme.*
 
@@ -57,12 +58,27 @@ fun HomeScreen(
     onSkins: () -> Unit,
     onSettings: () -> Unit
 ) {
+    val repo = remember { VersionRepository() }
+    var status by remember { mutableStateOf("Checking…") }
+
+    LaunchedEffect(Unit) {
+        val list = repo.getVersions()
+        val stable = list.firstOrNull { it.type == "release" }
+        val beta = list.firstOrNull { it.type == "beta" }
+        status = when {
+            stable != null && beta != null ->
+                "Ready · Stable ${stable.name} · Beta ${beta.name}"
+            stable != null -> "Ready · Latest ${stable.name}"
+            else -> "Ready · Catalog loaded"
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF87CEEB), DirtDark) // sky to dirt like official
+                    listOf(Color(0xFF87CEEB), DirtDark)
                 )
             )
     ) {
@@ -73,7 +89,6 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top logo area
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(48.dp))
                 Text(
@@ -103,7 +118,6 @@ fun HomeScreen(
                 )
             }
 
-            // Main buttons – classic Minecraft style
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -115,9 +129,8 @@ fun HomeScreen(
                 MinecraftButton(text = "Settings", onClick = onSettings)
             }
 
-            // Bottom status
             Text(
-                text = "Ready · Latest: checking…",
+                text = status,
                 fontSize = 12.sp,
                 color = TextLight.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center,
