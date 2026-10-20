@@ -1,21 +1,33 @@
 package com.openmojang.launcher.ui
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.openmojang.launcher.data.AuthManager
+import com.openmojang.launcher.data.InstalledVersions
+import com.openmojang.launcher.data.SettingsStore
+import com.openmojang.launcher.data.SkinManager
 import com.openmojang.launcher.data.UpdateChecker
 import com.openmojang.launcher.ui.screens.*
 
@@ -25,7 +37,7 @@ fun OpenMojangApp() {
     NavHost(nav, startDestination = "home") {
         composable("home") {
             HomeScreen(
-                onPlay = { nav.navigate("versions") },
+                onVersions = { nav.navigate("versions") },
                 onAccount = { nav.navigate("account") },
                 onSkins = { nav.navigate("skins") },
                 onSettings = { nav.navigate("settings") }
@@ -41,25 +53,57 @@ fun OpenMojangApp() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onPlay: () -> Unit,
+    onVersions: () -> Unit,
     onAccount: () -> Unit,
     onSkins: () -> Unit,
     onSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val checker = remember { UpdateChecker(context) }
-    var status by remember { mutableStateOf("Checking versions…") }
+    val installed = remember { InstalledVersions(context) }
+    val auth = remember { AuthManager(context) }
+    val skins = remember { SkinManager(context) }
+    val settings = remember { SettingsStore(context) }
+
+    var status by remember { mutableStateOf("Checking…") }
+    var updateAvailable by remember { mutableStateOf(false) }
+    var latestName by remember { mutableStateOf<String?>(null) }
+    var mcInstalled by remember { mutableStateOf(false) }
+    var installedVer by remember { mutableStateOf<String?>(null) }
+    var accountName by remember { mutableStateOf<String?>(null) }
+    var skinName by remember { mutableStateOf("Steve") }
+    var head by remember { mutableStateOf<Bitmap?>(null) }
+    var cacheMb by remember { mutableStateOf("0 MB") }
+    var launchError by remember { mutableStateOf<String?>(null) }
+
+    fun refresh() {
+        accountName = auth.current()?.gamertag
+        val active = skins.active()
+        skinName = active?.name ?: "Steve"
+        head = active?.let { skins.headBitmap(it) }
+        val bytes = settings.cacheBytes()
+        cacheMb = if (bytes <= 0) "0 MB" else "${bytes / (1024 * 1024)} MB"
+        installedVer = installed.systemMinecraftVersion()
+        mcInstalled = installedVer != null
+    }
 
     LaunchedEffect(Unit) {
-        val u = checker.check()
-        status = when {
-            u.installed == null && u.latestStable != null ->
-                "Minecraft is not installed. Latest stable is ${u.latestStable.name}."
-            u.updateAvailable && u.latestStable != null ->
-                "Update available: ${u.latestStable.name}. Installed: ${u.installed}."
-            u.installed != null ->
-                "Installed ${u.installed}. Beta ${u.latestBeta?.name ?: "—"}."
-            else -> "Catalog ready."
+        refresh()
+        if (settings.autoCheckUpdates) {
+            val u = checker.check()
+            updateAvailable = u.updateAvailable
+            latestName = u.latestStable?.name
+            status = when {
+                u.installed == null && u.latestStable != null ->
+                    "Not installed · latest ${u.latestStable.name}"
+                u.updateAvailable && u.latestStable != null ->
+                    "Update ${u.latestStable.name} · installed ${u.installed}"
+                u.installed != null ->
+                    "Up to date · ${u.installed}"
+                else -> "Catalog ready"
+            }
+        } else {
+            status = installedVer?.let { "Installed $it" } ?: "Minecraft not installed"
         }
     }
 
@@ -70,7 +114,12 @@ fun HomeScreen(
                 title = { Text("Open Mojang") },
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
-                )
+                ),
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    }
+                }
             )
         }
     ) { padding ->
@@ -87,33 +136,102 @@ fun HomeScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(16.dp)) {
+
+            // Status + update
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Status", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(4.dp))
                     Text(status, style = MaterialTheme.typography.bodyMedium)
+                    if (updateAvailable && latestName != null) {
+                        FilledTonalButton(
+                            onClick = onVersions,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Download, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Get $latestName")
+                        }
+                    }
                 }
             }
-            Button(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Icon(Icons.Outlined.Download, contentDescription = null)
+
+            // Play Minecraft
+            Button(
+                onClick = {
+                    launchError = null
+                    if (!installed.launchSystemMinecraft()) {
+                        launchError = "Minecraft is not installed on this device"
+                    }
+                },
+                enabled = mcInstalled,
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Versions")
+                Text(if (mcInstalled) "Play Minecraft" else "Minecraft not installed")
             }
-            OutlinedButton(onClick = onAccount, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Icon(Icons.Outlined.AccountCircle, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Microsoft account")
+            launchError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
-            OutlinedButton(onClick = onSkins, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Icon(Icons.Outlined.Face, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Skins")
+
+            // Account row
+            ElevatedCard(
+                onClick = onAccount,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ListItem(
+                    headlineContent = { Text(accountName ?: "Microsoft account") },
+                    supportingContent = {
+                        Text(if (accountName != null) "Signed in" else "Not signed in")
+                    },
+                    leadingContent = {
+                        Icon(Icons.Outlined.AccountCircle, contentDescription = null)
+                    }
+                )
             }
-            OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Icon(Icons.Outlined.Settings, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Settings")
+
+            // Skin row
+            ElevatedCard(
+                onClick = onSkins,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ListItem(
+                    headlineContent = { Text(skinName) },
+                    supportingContent = { Text("Active skin") },
+                    leadingContent = {
+                        if (head != null) {
+                            Image(
+                                bitmap = head!!.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp).clip(CircleShape),
+                                contentScale = ContentScale.Fit
+                            )
+                        } else {
+                            Icon(Icons.Outlined.Face, contentDescription = null)
+                        }
+                    }
+                )
             }
+
+            // Versions + cache
+            ElevatedCard(
+                onClick = onVersions,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ListItem(
+                    headlineContent = { Text("Versions") },
+                    supportingContent = {
+                        Text("Downloads · cache $cacheMb")
+                    },
+                    leadingContent = {
+                        Icon(Icons.Outlined.Download, contentDescription = null)
+                    },
+                    trailingContent = {
+                        TextButton(onClick = onVersions) { Text("Open") }
+                    }
+                )
+            }
+
             Text(
                 "v0.1.0",
                 style = MaterialTheme.typography.labelMedium,
