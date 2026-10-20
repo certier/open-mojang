@@ -47,6 +47,7 @@ fun ModifyScreen() {
     var vsync by remember { mutableStateOf(false) }
     var multiThread by remember { mutableStateOf(true) }
     var forceStopFirst by remember { mutableStateOf(true) }
+    var hasAllFiles by remember { mutableStateOf(editor.hasFullStorageAccess()) }
     val vulkanLabel = remember { editor.vulkanLevelLabel() }
 
     fun applyMap(map: Map<String, String>) {
@@ -67,9 +68,14 @@ fun ModifyScreen() {
     }
 
     fun reload() {
+        hasAllFiles = editor.hasFullStorageAccess()
         val loaded = editor.loadBest()
         if (loaded == null) {
-            sourceLabel = "No options.txt found · pick the file or open Minecraft once"
+            sourceLabel = if (!hasAllFiles) {
+                "Need All files access · tap Grant below"
+            } else {
+                "No options.txt found · open Minecraft once then Reload"
+            }
             options = emptyMap()
             message = null
         } else {
@@ -161,11 +167,20 @@ fun ModifyScreen() {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Text(
+                        if (hasAllFiles) "All files access · on" else "All files access · off",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (hasAllFiles) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { reload() }) { Text("Reload") }
-                        TextButton(onClick = {
-                            openDoc.launch(OptionsEditor.optionsMimeTypes())
-                        }) { Text("Pick file") }
+                        if (!hasAllFiles) {
+                            TextButton(onClick = {
+                                editor.openAllFilesSettings()
+                                message = "Grant All files access, then come back and tap Reload"
+                            }) { Text("Grant access") }
+                        }
                     }
                 }
             }
@@ -314,7 +329,7 @@ fun ModifyScreen() {
                     val built = buildOptions()
                     options = built
                     val result = editor.saveBest(built)
-                    message = result ?: "Save failed · pick options.txt with write access"
+                    message = result ?: "Save failed · grant All files access or pick options.txt"
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -336,7 +351,7 @@ fun ModifyScreen() {
             }
 
             Text(
-                "Close or force-stop Minecraft before Apply. On Android 11+ use Pick file if auto-detect fails.",
+                "Grant All files access once so the app finds options.txt itself. Force-stop before Apply.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
