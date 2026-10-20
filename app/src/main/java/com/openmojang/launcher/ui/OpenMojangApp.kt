@@ -233,21 +233,22 @@ fun HomeScreen(
         libraryCount = installed.listTracked().size
 
         val versions = withContext(Dispatchers.IO) { repo.getVersions() }
-        featured = versions.firstOrNull { it.type == "patch" }
-            ?: versions.firstOrNull { it.type == "release" }
-            ?: versions.firstOrNull()
+        featured = versions.maxWithOrNull(
+            compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) }
+        )
 
         if (settings.autoCheckUpdates) {
             val u = withContext(Dispatchers.IO) { checker.check() }
             updateAvailable = u.updateAvailable
-            latestName = u.latestStable?.displayName
+            latestName = u.updateTargetName
             status = when {
-                u.installed == null && u.latestStable != null ->
-                    "Minecraft not installed · latest ${u.latestStable.displayName}"
-                u.updateAvailable && u.latestStable != null ->
-                    "Update available · ${u.latestStable.displayName}"
+                u.installed == null && u.newestInCatalog != null ->
+                    "Minecraft not installed · catalog ${u.newestInCatalog.displayName}"
+                u.updateAvailable && u.updateTargetName != null ->
+                    "Update available · ${u.updateTargetName}"
                 u.installed != null ->
-                    "Ready · ${u.installed}"
+                    "Ready · ${u.installed}" +
+                        (u.installedMatch?.let { " (${it.typeLabel})" } ?: "")
                 else -> "Catalog ready"
             }
         } else {
