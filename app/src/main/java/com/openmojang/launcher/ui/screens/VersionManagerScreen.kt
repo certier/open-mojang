@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmojang.launcher.data.ApkInstaller
 import com.openmojang.launcher.data.ChangelogProvider
 import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
@@ -32,11 +33,13 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val repo = remember { VersionRepository() }
     val installed = remember { InstalledVersions(context) }
+    val apkInstaller = remember { ApkInstaller(context) }
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
     var selected by remember { mutableStateOf<McVersion?>(null) }
     var status by remember { mutableStateOf("Loading catalog…") }
     var systemVer by remember { mutableStateOf<String?>(null) }
+    var filter by remember { mutableStateOf("all") } // all | release | beta
 
     LaunchedEffect(Unit) {
         versions = repo.getVersions()
@@ -46,6 +49,12 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             if (systemVer != null) append(" · Installed $systemVer")
             else append(" · Minecraft not installed")
         }
+    }
+
+    val filtered = when (filter) {
+        "release" -> versions.filter { it.type == "release" }
+        "beta" -> versions.filter { it.type == "beta" }
+        else -> versions
     }
 
     Column(
@@ -78,6 +87,15 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         Text(text = status, color = TextLight.copy(alpha = 0.7f), fontSize = 13.sp)
         Spacer(Modifier.height(8.dp))
 
+        // Filter chips
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip("ALL", filter == "all") { filter = "all" }
+            FilterChip("STABLE", filter == "release") { filter = "release" }
+            FilterChip("BETA", filter == "beta") { filter = "beta" }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
         if (systemVer != null) {
             MinecraftButton(
                 text = "Launch Installed Minecraft",
@@ -87,14 +105,28 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 },
                 primary = true
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
         }
+
+        if (!apkInstaller.canRequestPackageInstalls()) {
+            Text(
+                text = "Allow install from this app →",
+                color = AccentGold,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clickable { apkInstaller.openUnknownSourcesSettings() }
+                    .padding(vertical = 4.dp)
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.weight(1f)
         ) {
-            items(versions) { v ->
+            items(filtered) { v ->
                 VersionCard(
                     version = v,
                     selected = selected?.id == v.id,
@@ -112,7 +144,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 colors = CardDefaults.cardColors(containerColor = DirtBrown),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 180.dp)
+                    .heightIn(max = 160.dp)
             ) {
                 Column(
                     Modifier
@@ -146,6 +178,20 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 fontSize = 11.sp
             )
         }
+    }
+}
+
+@Composable
+private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (selected) GrassGreen else DirtBrown)
+            .border(1.dp, if (selected) GrassDark else ButtonBorder, RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(label, color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
