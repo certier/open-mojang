@@ -28,8 +28,6 @@ data class McVersion(
 
 class VersionRepository {
 
-    private val changelog = ChangelogProvider()
-
     private val directApk = mapOf(
         "26.52" to "https://file.mcpedl.org/uploads_files/28-09-2026/minecraft-26-52-arm64-v8a.apk",
         "26.52.02" to "https://file.mcpedl.org/uploads_files/28-09-2026/minecraft-26-52-arm64-v8a.apk"
@@ -44,7 +42,7 @@ class VersionRepository {
             date = "2026-10",
             sizeMb = 210,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-70-20-apk/",
-            changelog = changelog.forVersion("26.70.20"),
+            changelog = ChangelogProvider.forVersion("26.70.20"),
             cover = "ice"
         ),
         McVersion(
@@ -55,7 +53,7 @@ class VersionRepository {
             date = "2026-09",
             sizeMb = 205,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-30-apk/",
-            changelog = changelog.forVersion("26.60.30"),
+            changelog = ChangelogProvider.forVersion("26.60.30"),
             cover = "ice"
         ),
         McVersion(
@@ -66,7 +64,7 @@ class VersionRepository {
             date = "2026-09",
             sizeMb = 204,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-29-apk/",
-            changelog = changelog.forVersion("26.60.29"),
+            changelog = ChangelogProvider.forVersion("26.60.29"),
             cover = "ice"
         ),
         McVersion(
@@ -77,7 +75,7 @@ class VersionRepository {
             date = "2026-09",
             sizeMb = 203,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-28-apk/",
-            changelog = changelog.forVersion("26.60.28"),
+            changelog = ChangelogProvider.forVersion("26.60.28"),
             cover = "ice"
         ),
         McVersion(
@@ -88,7 +86,7 @@ class VersionRepository {
             date = "2026-09",
             sizeMb = 198,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-52-apk/",
-            changelog = changelog.forVersion("26.52"),
+            changelog = ChangelogProvider.forVersion("26.52"),
             cover = "patch"
         ),
         McVersion(
@@ -99,7 +97,7 @@ class VersionRepository {
             date = "2026-08",
             sizeMb = 196,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-50-apk/",
-            changelog = changelog.forVersion("26.50"),
+            changelog = ChangelogProvider.forVersion("26.50"),
             cover = "sulfur"
         ),
         McVersion(
@@ -110,7 +108,7 @@ class VersionRepository {
             date = "2026-07",
             sizeMb = 190,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-30-apk/",
-            changelog = changelog.forVersion("26.30"),
+            changelog = ChangelogProvider.forVersion("26.30"),
             cover = "forest"
         ),
         McVersion(
@@ -121,7 +119,7 @@ class VersionRepository {
             date = "2024",
             sizeMb = 180,
             downloadUrl = "https://mcpedl.org/minecraft-pe-1-21-apk/",
-            changelog = changelog.forVersion("21.0"),
+            changelog = ChangelogProvider.forVersion("21.0"),
             cover = "grass"
         )
     )
@@ -135,16 +133,13 @@ class VersionRepository {
     fun findByInstalled(systemVer: String?): McVersion? {
         if (systemVer.isNullOrBlank()) return null
         val cleaned = systemVer.trim()
-        // Exact
         catalog.firstOrNull { it.patch.equals(cleaned, true) || it.name.equals(cleaned, true) }
             ?.let { return it }
-        // System often reports 1.26.70.20 — match catalog patch/name/id
         catalog.firstOrNull { v ->
             cleaned.contains(v.patch) || v.patch.contains(cleaned) ||
                 cleaned.contains(v.name) || cleaned.contains(v.id) ||
                 cleaned.replace("1.", "").contains(v.id)
         }?.let { return it }
-        // Exact numeric key match
         return catalog.firstOrNull {
             UpdateChecker.compareVersionStrings(cleaned, it.patch.ifBlank { it.name }) == 0
         }
