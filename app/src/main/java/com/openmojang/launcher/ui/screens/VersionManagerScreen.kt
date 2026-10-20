@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -28,6 +29,7 @@ import androidx.core.content.ContextCompat
 import com.openmojang.launcher.data.ApkInstaller
 import com.openmojang.launcher.data.DownloadEngine
 import com.openmojang.launcher.data.DownloadProgress
+import com.openmojang.launcher.data.InstalledBuild
 import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
 import com.openmojang.launcher.data.MirrorPref
@@ -49,6 +51,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
     var filter by remember { mutableStateOf("all") }
+    var query by remember { mutableStateOf("") }
     var systemVer by remember { mutableStateOf<String?>(null) }
     var sheetVersion by remember { mutableStateOf<McVersion?>(null) }
     var downloading by remember { mutableStateOf(false) }
@@ -59,7 +62,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* proceed either way — notification is best-effort */ }
+    ) { }
 
     LaunchedEffect(Unit) {
         versions = repo.getVersions()
@@ -73,9 +76,8 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         }
     }
 
-    // Listen for service progress / complete / error
     DisposableEffect(Unit) {
-        val filter = IntentFilter().apply {
+        val intentFilter = IntentFilter().apply {
             addAction(DownloadService.ACTION_PROGRESS)
             addAction(DownloadService.ACTION_COMPLETE)
             addAction(DownloadService.ACTION_ERROR)
@@ -103,11 +105,20 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         downloading = false
                         statusLine = "Done · ${mb(bytes)} MB" +
                             if (settings.installAfterDownload) " · install started" else ""
-                        progress = DownloadProgress(
-                            1f,
-                            bytes,
-                            bytes
-                        )
+                        progress = DownloadProgress(1f, bytes, bytes)
+                        // Track for history
+                        val v = sheetVersion
+                        if (v != null && path != null) {
+                            installed.track(
+                                InstalledBuild(
+                                    id = v.id,
+                                    name = v.name,
+                                    packageName = "com.mojang.minecraftpe",
+                                    apkPath = path,
+                                    installedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
                     }
                     DownloadService.ACTION_ERROR -> {
                         val id = intent.getStringExtra(DownloadService.EXTRA_VERSION_ID)
@@ -122,7 +133,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         ContextCompat.registerReceiver(
             context,
             receiver,
-            filter,
+            intentFilter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         onDispose {
@@ -133,10 +144,18 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         }
     }
 
-    val shown = when (filter) {
-        "release" -> versions.filter { it.type == "release" }
-        "beta" -> versions.filter { it.type == "beta" }
-        else -> versions
+    val shown = versions.filter { v ->
+        val typeOk = when (filter) {
+            "release" -> v.type == "release"
+            "beta" -> v.type == "beta"
+            else -> true
+        }
+        val q = query.trim()
+        val queryOk = q.isEmpty() ||
+            v.name.contains(q, ignoreCase = true) ||
+            v.id.contains(q, ignoreCase = true) ||
+            v.changelog.contains(q, ignoreCase = true)
+        typeOk && queryOk
     }
 
     Scaffold(
@@ -171,8 +190,19 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     Text("Allow this app to install apps")
                 }
             }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                singleLine = true,
+                label = { Text("Search") },
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                placeholder = { Text("1.26.52, beta, spectator…") }
+            )
             Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(selected = filter == "all", onClick = { filter = "all" }, label = { Text("All") })
@@ -296,9 +326,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                     context,
                                     Manifest.permission.POST_NOTIFICATIONS
                                 ) == PackageManager.PERMISSION_GRANTED
-                                if (!granted) {
-                                    notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                }
+                                if (!granted) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                             }
                             downloading = true
                             error = null
