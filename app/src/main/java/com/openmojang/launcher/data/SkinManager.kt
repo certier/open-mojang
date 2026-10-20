@@ -45,13 +45,37 @@ class SkinManager(private val context: Context) {
 
     fun setActive(id: String) {
         activeFile.writeText(id)
-        // Best-effort push into Minecraft data folders
         list().firstOrNull { it.id == id }?.let { applyToMinecraft(it) }
+    }
+
+    /** Locate the custom.png Minecraft is already using. */
+    fun findCurrentGameSkin(): File? {
+        val storage = Environment.getExternalStorageDirectory() ?: return null
+        val paths = listOf(
+            "games/com.mojang/minecraftpe/custom.png",
+            "games/com.mojang/minecraftpe/custom_skin.png",
+            "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/custom.png",
+            "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/custom_skin.png"
+        )
+        for (rel in paths) {
+            val f = File(storage, rel)
+            if (f.isFile && f.canRead() && f.length() > 100) return f
+        }
+        return null
+    }
+
+    fun loadCurrentGameSkinBitmap(): Bitmap? {
+        val f = findCurrentGameSkin() ?: return null
+        return try {
+            BitmapFactory.decodeFile(f.absolutePath)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**
      * Copy skin PNG into known Bedrock custom-skin locations.
-     * Multiplayer persona still needs Microsoft; local/single may pick this up.
+     * Force-stop first so the game reloads on next launch.
      */
     fun applyToMinecraft(skin: LocalSkin): String {
         if (skin.isSteve || skin.path.isEmpty()) {
@@ -60,16 +84,21 @@ class SkinManager(private val context: Context) {
         val src = File(skin.path)
         if (!src.isFile) return "Skin file missing"
 
+        OptionsEditor(context).forceStopMinecraft()
+
         val targets = mutableListOf<File>()
         Environment.getExternalStorageDirectory()?.let { root ->
             targets += File(root, "games/com.mojang/minecraftpe/custom.png")
-            targets += File(root, "games/com.mojang/minecraftpe/skin.png")
+            targets += File(root, "games/com.mojang/minecraftpe/custom_skin.png")
             targets += File(
                 root,
                 "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/custom.png"
             )
+            targets += File(
+                root,
+                "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/custom_skin.png"
+            )
         }
-        // Always keep a copy under our external files for the user to move
         targets += File(context.getExternalFilesDir(null), "minecraftpe/custom.png")
 
         var wrote = 0

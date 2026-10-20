@@ -7,7 +7,6 @@ data class UpdateStatus(
     val latestBeta: McVersion?,
     val newestInCatalog: McVersion?,
     val updateAvailable: Boolean,
-    /** Human line when an update exists, else null. */
     val updateTargetName: String?
 )
 
@@ -31,7 +30,7 @@ class UpdateChecker(
         val system = installed.systemMinecraftVersion()
         val match = repo.findByInstalled(system)
 
-        // Only "update" if catalog has something strictly newer than installed
+        // Only offer update when catalog has something strictly newer than installed
         val candidate = newest
         val updateAvailable = when {
             system == null && candidate != null -> true
@@ -40,8 +39,6 @@ class UpdateChecker(
             else -> false
         }
 
-        val targetName = if (updateAvailable) candidate?.displayName else null
-
         return UpdateStatus(
             installed = system,
             installedMatch = match,
@@ -49,12 +46,12 @@ class UpdateChecker(
             latestBeta = beta,
             newestInCatalog = newest,
             updateAvailable = updateAvailable,
-            updateTargetName = targetName
+            updateTargetName = if (updateAvailable) candidate?.displayName else null
         )
     }
 
     companion object {
-        /** Numeric key for ordering 1.26.70.20 > 1.26.50 */
+        /** Numeric key so 1.26.70.20 > 1.26.50 */
         fun versionKey(raw: String): List<Int> =
             Regex("\\d+").findAll(raw).map { it.value.toIntOrNull() ?: 0 }.toList()
 

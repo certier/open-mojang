@@ -2,10 +2,12 @@ package com.openmojang.launcher.data
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.Settings
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -13,7 +15,7 @@ import java.util.Locale
 
 /**
  * Reads and writes Minecraft Bedrock options.txt.
- * Also: force-stop game process, Vulkan capability probe, backups.
+ * Auto-finds the file when All files access is granted — no picker required.
  */
 class OptionsEditor(private val context: Context) {
 
@@ -25,11 +27,37 @@ class OptionsEditor(private val context: Context) {
             prefs.edit().putString(KEY_URI, value?.toString()).apply()
         }
 
+    fun hasFullStorageAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
+    }
+
+    fun openAllFilesSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                context.startActivity(
+                    Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+    }
+
     fun candidateFiles(): List<File> {
         val out = mutableListOf<File>()
         val roots = mutableListOf<File>()
         Environment.getExternalStorageDirectory()?.let { roots += it }
         context.getExternalFilesDir(null)?.parentFile?.parentFile?.let { roots += it }
+
         val relative = listOf(
             "games/com.mojang/minecraftpe/options.txt",
             "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/options.txt",
@@ -39,6 +67,24 @@ class OptionsEditor(private val context: Context) {
             for (rel in relative) {
                 val f = File(root, rel)
                 if (f.isFile) out += f
+            }
+            // Deep walk when All files access is granted
+            if (hasFullStorageAccess()) {
+                try {
+                    val games = File(root, "games/com.mojang")
+                    if (games.isDirectory) {
+                        games.walkTopDown().maxDepth(5).forEach { f ->
+                            if (f.isFile && f.name.equals("options.txt", true)) out += f
+                        }
+                    }
+                    val adata = File(root, "Android/data/com.mojang.minecraftpe")
+                    if (adata.isDirectory) {
+                        adata.walkTopDown().maxDepth(7).forEach { f ->
+                            if (f.isFile && f.name.equals("options.txt", true)) out += f
+                        }
+                    }
+                } catch (_: Exception) {
+                }
             }
         }
         val mirror = File(context.getExternalFilesDir(null), "minecraftpe/options.txt")
@@ -108,7 +154,6 @@ class OptionsEditor(private val context: Context) {
         return null
     }
 
-    /** Snapshot current options into app storage. */
     fun backup(options: Map<String, String>): String? {
         return try {
             val dir = File(context.getExternalFilesDir(null), "minecraftpe/backups").apply { mkdirs() }
@@ -129,7 +174,6 @@ class OptionsEditor(private val context: Context) {
             .orEmpty()
     }
 
-    /** Kill Minecraft process so options.txt is not overwritten on exit. */
     fun forceStopMinecraft(): Boolean {
         return try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -215,7 +259,6 @@ class OptionsEditor(private val context: Context) {
                 setGraphicsApi(m, GraphicsApi.VULKAN)
             }
             Preset.FULLBRIGHT -> {
-                // Game may clamp gamma; still the real key players edit
                 m["gfx_gamma"] = "1"
                 m["gfx_smoothlighting"] = "0"
             }
