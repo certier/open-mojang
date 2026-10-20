@@ -5,22 +5,14 @@ import java.io.File
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class AbiPref { AUTO, ARM64, ARM32 }
-enum class MirrorPref { AUTO, MCPEDL, MCPE_PLANET }
+enum class MirrorPref { MCPEDL, MCPE_PLANET, AUTO }
+
 /** Mirrors often ship two APKs: full (with music) and slim (no music). */
 enum class MusicPref { AUTO, WITH_MUSIC, NO_MUSIC }
 
-class SettingsStore(context: Context) {
+class SettingsStore(private val context: Context) {
 
-    private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences("open_mojang_settings", Context.MODE_PRIVATE)
-
-    var autoCheckUpdates: Boolean
-        get() = prefs.getBoolean(KEY_AUTO_UPDATE, true)
-        set(value) = prefs.edit().putBoolean(KEY_AUTO_UPDATE, value).apply()
-
-    var keepOldVersions: Boolean
-        get() = prefs.getBoolean(KEY_KEEP_OLD, true)
-        set(value) = prefs.edit().putBoolean(KEY_KEEP_OLD, value).apply()
+    private val prefs = context.getSharedPreferences("open_mojang_settings", Context.MODE_PRIVATE)
 
     var preferredMirror: MirrorPref
         get() = runCatching {
@@ -34,11 +26,11 @@ class SettingsStore(context: Context) {
         }.getOrDefault(AbiPref.AUTO)
         set(value) = prefs.edit().putString(KEY_ABI, value.name).apply()
 
-    /** Prefer no-music by default — smaller download on mobile. */
+    /** Default WITH_MUSIC — full game unless the user picks slim. */
     var preferredMusic: MusicPref
         get() = runCatching {
-            MusicPref.valueOf(prefs.getString(KEY_MUSIC, MusicPref.NO_MUSIC.name) ?: MusicPref.NO_MUSIC.name)
-        }.getOrDefault(MusicPref.NO_MUSIC)
+            MusicPref.valueOf(prefs.getString(KEY_MUSIC, MusicPref.WITH_MUSIC.name) ?: MusicPref.WITH_MUSIC.name)
+        }.getOrDefault(MusicPref.WITH_MUSIC)
         set(value) = prefs.edit().putString(KEY_MUSIC, value.name).apply()
 
     var themeMode: ThemeMode
@@ -47,21 +39,26 @@ class SettingsStore(context: Context) {
         }.getOrDefault(ThemeMode.SYSTEM)
         set(value) = prefs.edit().putString(KEY_THEME, value.name).apply()
 
+    var autoCheckUpdates: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_UPDATE, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_UPDATE, value).apply()
+
+    var keepOldApks: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_OLD, true)
+        set(value) = prefs.edit().putBoolean(KEY_KEEP_OLD, value).apply()
+
     var installAfterDownload: Boolean
         get() = prefs.getBoolean(KEY_INSTALL_AFTER, true)
         set(value) = prefs.edit().putBoolean(KEY_INSTALL_AFTER, value).apply()
 
-    var wifiOnlyDownloads: Boolean
+    var wifiOnly: Boolean
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
-
-    fun downloadDir(): File =
-        File(appContext.getExternalFilesDir(null), "Download").apply { mkdirs() }
 
     fun cacheBytes(): Long {
         val dir = downloadDir()
         if (!dir.exists()) return 0L
-        return dir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+        return dir.listFiles()?.sumOf { it.length() } ?: 0L
     }
 
     fun clearCache(): Int {
@@ -73,6 +70,9 @@ class SettingsStore(context: Context) {
         }
         return n
     }
+
+    private fun downloadDir(): File =
+        File(context.getExternalFilesDir(null), "Download").apply { mkdirs() }
 
     companion object {
         private const val KEY_AUTO_UPDATE = "auto_update"
