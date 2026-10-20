@@ -18,29 +18,31 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.openmojang.launcher.data.DownloadEngine
+import com.openmojang.launcher.data.InstalledVersions
 import com.openmojang.launcher.data.McVersion
 import com.openmojang.launcher.data.VersionRepository
 import com.openmojang.launcher.ui.MinecraftButton
 import com.openmojang.launcher.ui.theme.*
-import kotlinx.coroutines.launch
 
 @Composable
 fun VersionManagerScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val repo = remember { VersionRepository() }
-    val engine = remember { DownloadEngine(context) }
-    val scope = rememberCoroutineScope()
+    val installed = remember { InstalledVersions(context) }
 
     var versions by remember { mutableStateOf<List<McVersion>>(emptyList()) }
     var selected by remember { mutableStateOf<McVersion?>(null) }
-    var downloading by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf("Loading catalog…") }
+    var systemVer by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         versions = repo.getVersions()
-        status = "Ready · ${versions.size} builds"
+        systemVer = installed.systemMinecraftVersion()
+        status = buildString {
+            append("Catalog · ${versions.size} builds")
+            if (systemVer != null) append(" · Installed $systemVer")
+            else append(" · Minecraft not installed")
+        }
     }
 
     Column(
@@ -71,7 +73,19 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(12.dp))
         Text(text = status, color = TextLight.copy(alpha = 0.7f), fontSize = 13.sp)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
+
+        if (systemVer != null) {
+            MinecraftButton(
+                text = "Launch Installed Minecraft",
+                onClick = {
+                    val ok = installed.launchSystemMinecraft()
+                    if (!ok) status = "Could not launch Minecraft"
+                },
+                primary = true
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -104,32 +118,18 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 }
             }
 
-            if (downloading) {
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = GrassGreen,
-                    trackColor = DirtBrown
-                )
-            }
-
             Spacer(Modifier.height(12.dp))
             MinecraftButton(
-                text = when {
-                    downloading -> "Downloading ${(progress * 100).toInt()}%"
-                    else -> "Open Download Page"
-                },
+                text = "Open Download Page",
                 onClick = {
-                    // Open the mirror page (direct APK URLs rotate; page is stable)
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(v.downloadUrl))
                     context.startActivity(intent)
                 },
                 primary = true
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
-                text = "Tip: after download finishes, open the APK from notifications or Files to install.",
+                text = "After download, open the APK from Files or notifications to install.",
                 color = TextLight.copy(alpha = 0.5f),
                 fontSize = 11.sp
             )
