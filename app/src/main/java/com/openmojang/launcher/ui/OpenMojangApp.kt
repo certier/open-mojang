@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -61,6 +62,7 @@ fun OpenMojangApp() {
     val tabs = listOf(
         Tab("home", "Home", Icons.Outlined.Home),
         Tab("versions", "Versions", Icons.Outlined.Download),
+        Tab("modify", "Modify", Icons.Outlined.Tune),
         Tab("library", "Library", Icons.Outlined.Inventory2),
         Tab("more", "More", Icons.Outlined.MoreHoriz)
     )
@@ -125,6 +127,7 @@ fun OpenMojangApp() {
             composable("versions") {
                 VersionManagerScreen(onBack = { nav.popBackStack() })
             }
+            composable("modify") { ModifyScreen() }
             composable("library") { LibraryScreen() }
             composable("more") {
                 MoreScreen(
@@ -217,7 +220,6 @@ fun HomeScreen(
     var cacheMb by remember { mutableStateOf("0 MB") }
     var libraryCount by remember { mutableStateOf(0) }
     var launchError by remember { mutableStateOf<String?>(null) }
-    var ready by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         accountName = auth.current()?.gamertag
@@ -251,7 +253,6 @@ fun HomeScreen(
         } else {
             status = installedVer?.let { "Ready · $it" } ?: "Minecraft not installed"
         }
-        ready = true
     }
 
     Scaffold(
@@ -286,7 +287,6 @@ fun HomeScreen(
         ) {
             Spacer(Modifier.height(4.dp))
 
-            // Hero play card
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     Modifier.padding(20.dp),
@@ -358,7 +358,6 @@ fun HomeScreen(
                 }
             }
 
-            // Featured
             AnimatedVisibility(visible = featured != null, enter = fadeIn()) {
                 featured?.let { v ->
                     ElevatedCard(
