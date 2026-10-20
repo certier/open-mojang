@@ -111,7 +111,7 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             LargeTopAppBar(
-                title = { Text("Open Mojang") },
+                title = { Text("Peak Launcher") },
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 ),
@@ -132,7 +132,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                "Bedrock launcher",
+                "Bedrock · release · Minecraft Patch · beta",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -217,7 +217,7 @@ fun HomeScreen(
             }
 
             Text(
-                "v0.1.0",
+                "Peak Launcher · v0.1.0",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
