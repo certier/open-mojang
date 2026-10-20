@@ -16,6 +16,7 @@ import com.openmojang.launcher.MainActivity
 import com.openmojang.launcher.data.DownloadEngine
 import com.openmojang.launcher.data.DownloadProgress
 import com.openmojang.launcher.data.SettingsStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,20 +26,19 @@ import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
 
-/**
- * Background APK download as a foreground service.
- * Progress is shown in a sticky notification and broadcast to the UI.
- */
 class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
+    private var activeFileName: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
             job?.cancel()
+            deletePartials(activeFileName)
+            DownloadEngine(applicationContext).purgeIncomplete()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -52,6 +52,7 @@ class DownloadService : Service() {
         val sizeMb = intent.getIntExtra(EXTRA_SIZE_MB, 0)
         val fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: "minecraft-$versionId.apk"
         val urls = intent.getStringArrayExtra(EXTRA_URLS)?.toList().orEmpty()
+        activeFileName = fileName
 
         if (urls.isEmpty()) {
             broadcastError(versionId, "No download URLs")
@@ -75,6 +76,7 @@ class DownloadService : Service() {
         job = scope.launch {
             val engine = DownloadEngine(applicationContext)
             val settings = SettingsStore(applicationContext)
+            engine.purgeIncomplete()
             try {
                 broadcastProgress(versionId, DownloadProgress(0f, 0, 0), versionName)
                 val file = engine.downloadFirst(urls, fileName) { p ->
@@ -95,18 +97,20 @@ class DownloadService : Service() {
                     }
                 }
 
-                if (!looksLikeApk(file)) {
-                    file.delete()
-                    throw IllegalStateException("Downloaded file is not a valid APK")
-                }
-
                 completeNotification(versionName, file.length(), success = true)
                 broadcastComplete(versionId, file.absolutePath, file.length())
 
                 if (settings.installAfterDownload) {
                     engine.installApk(file)
                 }
+            } catch (e: CancellationException) {
+                deletePartials(fileName)
+                engine.purgeIncomplete()
+                completeNotification(versionName, 0, success = false, message = "Cancelled")
+                broadcastError(versionId, "Download cancelled")
             } catch (e: Exception) {
+                deletePartials(fileName)
+                engine.purgeIncomplete()
                 completeNotification(versionName, 0, success = false, message = e.message)
                 broadcastError(versionId, e.message ?: "Download failed")
             } finally {
@@ -116,6 +120,15 @@ class DownloadService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    private fun deletePartials(fileName: String?) {
+        if (fileName.isNullOrBlank()) return
+        val dir = File(applicationContext.getExternalFilesDir(null), "Download")
+        File(dir, "$fileName.part").delete()
+        val final = File(dir, fileName)
+        // only delete final if it is clearly incomplete (tiny)
+        if (final.exists() && final.length() < 5_000_000L) final.delete()
     }
 
     override fun onDestroy() {
@@ -295,22 +308,5 @@ class DownloadService : Service() {
 
         private fun mb(bytes: Long): String =
             if (bytes <= 0L) "0.0" else "%.1f".format(bytes / (1024.0 * 1024.0))
-
-        private fun looksLikeApk(file: File): Boolean {
-            if (!file.exists() || file.length() < 1000) return false
-            return try {
-                file.inputStream().use { input ->
-                    val header = ByteArray(4)
-                    val n = input.read(header)
-                    n == 4 &&
-                        header[0] == 0x50.toByte() &&
-                        header[1] == 0x4B.toByte() &&
-                        header[2] == 0x03.toByte() &&
-                        header[3] == 0x04.toByte()
-                }
-            } catch (_: Exception) {
-                false
-            }
-        }
     }
 }
