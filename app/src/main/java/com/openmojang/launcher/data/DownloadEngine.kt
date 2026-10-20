@@ -394,12 +394,8 @@ class DownloadEngine(private val context: Context) {
             apkFile.delete()
             throw IllegalStateException("APK is incomplete or corrupt")
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        }
-        context.startActivity(intent)
+        val ok = ApkInstaller(context).install(apkFile)
+        if (!ok) throw IllegalStateException("Could not start install")
     }
 
     private fun downloadDir(): File =
