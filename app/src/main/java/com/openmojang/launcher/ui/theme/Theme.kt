@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.openmojang.launcher.data.SettingsStore
+import com.openmojang.launcher.data.ThemeMode
 
 private val LightScheme = lightColorScheme(
     primary = PrimaryBlue,
@@ -53,7 +55,13 @@ private val DarkScheme = darkColorScheme(
 @Composable
 fun OpenMojangTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
+    val store = SettingsStore(context)
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (store.themeMode) {
+        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
     val scheme = when {
         Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(context)
         Build.VERSION.SDK_INT >= 31 -> dynamicLightColorScheme(context)
