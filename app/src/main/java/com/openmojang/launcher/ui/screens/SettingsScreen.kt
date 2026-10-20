@@ -1,21 +1,20 @@
 package com.openmojang.launcher.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -24,67 +23,106 @@ fun SettingsScreen(onBack: () -> Unit) {
     var autoUpdate by remember { mutableStateOf(store.autoCheckUpdates) }
     var keepOld by remember { mutableStateOf(store.keepOldVersions) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DirtDark)
-            .padding(16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "← BACK",
-                color = AccentGold,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { onBack() }
+    Scaffold(
+        containerColor = DirtDark,
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SurfaceContainer,
+                    titleContentColor = TextLight,
+                    navigationIconContentColor = AccentGold
+                )
             )
-            Spacer(Modifier.weight(1f))
-            Text("SETTINGS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = TextLight)
-            Spacer(Modifier.weight(1f))
         }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "DOWNLOADS",
+                style = MaterialTheme.typography.labelMedium,
+                color = AccentGold
+            )
 
-        Spacer(Modifier.height(32.dp))
-
-        Text("Download source", color = TextLight, fontWeight = FontWeight.Bold)
-        Text("mcpe-planet / mcpedl (auto)", color = TextLight.copy(alpha = 0.7f), fontSize = 13.sp)
-
-        Spacer(Modifier.height(20.dp))
-
-        SettingToggle(
-            title = "Auto-check for updates",
-            subtitle = if (autoUpdate) "On" else "Off",
-            checked = autoUpdate,
-            onCheckedChange = {
-                autoUpdate = it
-                store.autoCheckUpdates = it
+            SettingsCard {
+                Text("Source", style = MaterialTheme.typography.titleMedium, color = TextLight)
+                Text(
+                    "mcpe-planet / mcpedl (auto)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted
+                )
             }
-        )
 
-        Spacer(Modifier.height(12.dp))
-
-        SettingToggle(
-            title = "Keep old versions",
-            subtitle = if (keepOld) "Yes – manage in Versions" else "No",
-            checked = keepOld,
-            onCheckedChange = {
-                keepOld = it
-                store.keepOldVersions = it
+            SettingsCard {
+                SettingRow(
+                    title = "Auto-check updates",
+                    subtitle = if (autoUpdate) "On" else "Off",
+                    checked = autoUpdate,
+                    onCheckedChange = {
+                        autoUpdate = it
+                        store.autoCheckUpdates = it
+                    }
+                )
             }
-        )
 
-        Spacer(Modifier.height(32.dp))
+            SettingsCard {
+                SettingRow(
+                    title = "Keep old versions",
+                    subtitle = if (keepOld) "Yes" else "No",
+                    checked = keepOld,
+                    onCheckedChange = {
+                        keepOld = it
+                        store.keepOldVersions = it
+                    }
+                )
+            }
 
-        Text("Open Mojang v0.1.0", color = TextLight.copy(alpha = 0.6f), fontSize = 13.sp)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "Not affiliated with Mojang Studios or Microsoft.",
-            color = TextLight.copy(alpha = 0.5f),
-            fontSize = 12.sp
-        )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "ABOUT",
+                style = MaterialTheme.typography.labelMedium,
+                color = AccentGold
+            )
+
+            SettingsCard {
+                Text("Open Mojang", style = MaterialTheme.typography.titleMedium, color = TextLight)
+                Text("v0.1.0", style = MaterialTheme.typography.bodySmall, color = TextMuted)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Not affiliated with Mojang or Microsoft.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun SettingToggle(
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SurfaceContainerHigh),
+        shape = MaterialTheme.shapes.medium,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp), content = content)
+    }
+}
+
+@Composable
+private fun SettingRow(
     title: String,
     subtitle: String,
     checked: Boolean,
@@ -95,8 +133,12 @@ private fun SettingToggle(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = TextLight, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = if (checked) GrassGreen else TextLight.copy(alpha = 0.5f), fontSize = 13.sp)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = TextLight)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (checked) GrassLight else TextMuted
+            )
         }
         Switch(
             checked = checked,
@@ -104,7 +146,7 @@ private fun SettingToggle(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = TextLight,
                 checkedTrackColor = GrassGreen,
-                uncheckedThumbColor = TextLight,
+                uncheckedThumbColor = TextMuted,
                 uncheckedTrackColor = StoneGray
             )
         )
