@@ -1,7 +1,5 @@
 package com.openmojang.launcher.ui.screens
 
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -97,7 +95,7 @@ fun SkinScreen(onBack: () -> Unit) {
                     Card(
                         onClick = { selected = skin },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (sel) SurfaceContainerHighest else SurfaceContainer
+                            containerColor = if (sel) DirtBrown else SurfaceContainer
                         ),
                         border = androidx.compose.foundation.BorderStroke(
                             2.dp,
