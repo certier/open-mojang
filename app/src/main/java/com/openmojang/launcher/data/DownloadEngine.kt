@@ -2,19 +2,19 @@ package com.openmojang.launcher.data
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.FormBody
-import okhttp3.JavaNetCookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.net.CookieManager
-import java.net.CookiePolicy
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 data class DownloadProgress(
@@ -33,12 +33,27 @@ data class DownloadProgress(
  */
 class DownloadEngine(private val context: Context) {
 
-    private val cookieManager = CookieManager().apply {
-        setCookiePolicy(CookiePolicy.ACCEPT_ALL)
-    }
+    private val memoryCookies = ConcurrentHashMap<String, MutableList<Cookie>>()
 
     private val client = OkHttpClient.Builder()
-        .cookieJar(JavaNetCookieJar(cookieManager))
+        .cookieJar(object : CookieJar {
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                val list = memoryCookies.getOrPut(url.host) { mutableListOf() }
+                synchronized(list) {
+                    for (c in cookies) {
+                        list.removeAll { it.name == c.name }
+                        list.add(c)
+                    }
+                }
+            }
+
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                val list = memoryCookies[url.host] ?: return emptyList()
+                synchronized(list) {
+                    return list.filter { it.matches(url) }
+                }
+            }
+        })
         .followRedirects(true)
         .followSslRedirects(true)
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -66,7 +81,7 @@ class DownloadEngine(private val context: Context) {
             try {
                 return downloadApk(url, fileName, onProgress)
             } catch (e: Exception) {
-                errors += "${url.take(60)}… → ${e.message}"
+                errors += "${url.take(64)} → ${e.message}"
                 onProgress(DownloadProgress(0f, 0, 0))
             }
         }
@@ -97,13 +112,12 @@ class DownloadEngine(private val context: Context) {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IllegalStateException("APK HTTP ${response.code} for $apkUrl")
+                throw IllegalStateException("APK HTTP ${response.code}")
             }
             val body = response.body ?: throw IllegalStateException("Empty APK body")
             val type = response.header("Content-Type").orEmpty()
-            // Reject HTML gate pages that slipped through
             if (type.contains("text/html", ignoreCase = true)) {
-                throw IllegalStateException("Got HTML instead of APK from $apkUrl")
+                throw IllegalStateException("Got HTML instead of APK")
             }
             val total = body.contentLength()
             val outFile = File(downloadDir(), fileName)
@@ -124,21 +138,17 @@ class DownloadEngine(private val context: Context) {
             }
             if (outFile.length() < 5_000_000L) {
                 outFile.delete()
-                throw IllegalStateException(
-                    "File too small (${outFile.length()} B) — not a Minecraft APK"
-                )
+                throw IllegalStateException("File too small (${outFile.length()} B)")
             }
             return outFile
         }
     }
 
     private fun resolveApkUrl(pageOrApkUrl: String): String {
-        // Already a direct APK
         if (looksLikeApkUrl(pageOrApkUrl)) {
             return pageOrApkUrl
         }
 
-        // Known hardcoded mirrors for current builds
         DIRECT_APK[pageOrApkUrl]?.let { return it }
         for ((key, direct) in DIRECT_APK) {
             if (pageOrApkUrl.contains(key)) return direct
@@ -146,11 +156,14 @@ class DownloadEngine(private val context: Context) {
 
         val pageHtml = getHtml(pageOrApkUrl)
 
-        // Absolute .apk already in page HTML
+        if (looksLikeApkUrl(pageHtml) && pageHtml.length < 500) {
+            // getHtml returned a redirect URL string
+            return pageHtml.trim()
+        }
+
         APK_ABS.find(pageHtml)?.value?.let { return it }
         FILE_MCPEDL.find(pageHtml)?.value?.let { return it }
 
-        // MCPEDL forms → show_file.php
         val forms = FORM_BLOCK.findAll(pageHtml).map { it.value }.toList()
         if (forms.isNotEmpty()) {
             val preferred = forms.firstOrNull { f ->
@@ -168,25 +181,23 @@ class DownloadEngine(private val context: Context) {
 
             val gateHtml = postShowFile(fileId, postTitle, postUrl)
 
-            // JS var DOWNLOAD_URL = "https://file.mcpedl.org/...apk"
             DOWNLOAD_URL_JS.find(gateHtml)?.groupValues?.get(1)?.let { return it }
             APK_ABS.find(gateHtml)?.value?.let { return it }
             FILE_MCPEDL.find(gateHtml)?.value?.let { return it }
 
-            throw IllegalStateException("show_file.php gate had no APK link (file_id=$fileId)")
+            throw IllegalStateException("show_file gate had no APK (file_id=$fileId)")
         }
 
         APK_HREF.find(pageHtml)?.groupValues?.get(1)?.let { link ->
             return if (link.startsWith("http")) link else "https://mcpedl.org$link"
         }
 
-        throw IllegalStateException("No APK resolver matched: $pageOrApkUrl")
+        throw IllegalStateException("No APK resolver matched")
     }
 
     private fun looksLikeApkUrl(url: String): Boolean {
         return url.contains(".apk", ignoreCase = true) &&
-            (url.contains("file.mcpedl.org", ignoreCase = true) ||
-                url.endsWith(".apk", ignoreCase = true))
+            (url.startsWith("http") && !url.contains('<'))
     }
 
     private fun getHtml(url: String): String {
@@ -206,7 +217,6 @@ class DownloadEngine(private val context: Context) {
                 type.contains("package-archive") ||
                 type.contains("octet-stream")
             ) {
-                // Redirect landed on binary — treat as APK url
                 return finalUrl
             }
             return response.body?.string().orEmpty()
@@ -235,7 +245,7 @@ class DownloadEngine(private val context: Context) {
         }
     }
 
-    /** System install sheet — same path users see from Downloads / Play sideload. */
+    /** System install sheet — same UX as opening an APK from Downloads. */
     fun installApk(apkFile: File) {
         val uri = FileProvider.getUriForFile(
             context,
@@ -245,9 +255,6 @@ class DownloadEngine(private val context: Context) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            }
         }
         context.startActivity(intent)
     }
