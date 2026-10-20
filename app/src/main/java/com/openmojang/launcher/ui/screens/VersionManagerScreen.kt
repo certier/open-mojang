@@ -41,6 +41,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     var sheetVersion by remember { mutableStateOf<McVersion?>(null) }
     var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(DownloadProgress(0f, 0, 0)) }
+    var statusLine by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var apk by remember { mutableStateOf<File?>(null) }
 
@@ -97,18 +98,27 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             }
             LazyColumn {
                 items(shown, key = { it.id }) { v ->
+                    val cached = engine.cached("minecraft-${v.id}.apk")
                     ListItem(
                         headlineContent = { Text(v.name) },
-                        supportingContent = { Text("${v.type} · ${v.date} · ${v.sizeMb} MB") },
+                        supportingContent = {
+                            Text(
+                                buildString {
+                                    append("${v.type} · ${v.date} · ${v.sizeMb} MB")
+                                    if (cached != null) append(" · saved")
+                                }
+                            )
+                        },
                         leadingContent = { Icon(Icons.Outlined.Download, contentDescription = null) },
                         trailingContent = {
                             FilledTonalButton(onClick = {
                                 sheetVersion = v
                                 error = null
-                                apk = null
+                                statusLine = ""
                                 progress = DownloadProgress(0f, 0, 0)
                                 downloading = false
-                            }) { Text("Get") }
+                                apk = engine.cached("minecraft-${v.id}.apk")
+                            }) { Text(if (cached != null) "Install" else "Get") }
                         }
                     )
                     HorizontalDivider()
@@ -137,6 +147,11 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(20.dp))
 
+                if (statusLine.isNotEmpty()) {
+                    Text(statusLine, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 if (downloading || progress.bytesRead > 0L) {
                     LinearProgressIndicator(
                         progress = { if (progress.bytesTotal > 0) progress.fraction.coerceIn(0f, 1f) else 0f },
@@ -145,8 +160,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     val label = if (progress.bytesTotal > 0) {
                         "${(progress.fraction * 100).roundToInt()}%  ·  ${mb(progress.bytesRead)} / ${mb(progress.bytesTotal)} MB"
-                    } else {
+                    } else if (progress.bytesRead > 0) {
                         "${mb(progress.bytesRead)} MB"
+                    } else {
+                        "Resolving download…"
                     }
                     Text(label, style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(16.dp))
@@ -163,7 +180,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                                 !context.packageManager.canRequestPackageInstalls()
                             ) {
-                                error = "Turn on install permission, then tap Download again"
+                                error = "Turn on install permission, then try again"
                                 context.startActivity(
                                     Intent(
                                         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -174,16 +191,22 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             }
                             downloading = true
                             error = null
+                            statusLine = "Looking up APK…"
                             scope.launch {
                                 try {
-                                    val file = engine.downloadApk(
-                                        pageOrApkUrl = target.downloadUrl,
+                                    val file = engine.downloadFirst(
+                                        urls = repo.urlsFor(target),
                                         fileName = "minecraft-${target.id}.apk"
-                                    ) { p -> progress = p }
+                                    ) { p ->
+                                        progress = p
+                                        if (p.bytesRead > 0) statusLine = "Downloading…"
+                                    }
                                     apk = file
+                                    statusLine = "Installing…"
                                     engine.installApk(file)
                                 } catch (e: Exception) {
                                     error = e.message ?: "Download failed"
+                                    statusLine = ""
                                 } finally {
                                     downloading = false
                                 }
@@ -192,19 +215,30 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         enabled = !downloading,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (downloading) "Downloading…" else "Download and install")
+                        Text(if (downloading) "Working…" else "Download and install")
                     }
                 } else {
                     Button(
                         onClick = {
                             try {
+                                statusLine = "Installing…"
                                 engine.installApk(apk!!)
                             } catch (e: Exception) {
                                 error = e.message
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Install") }
+                    ) { Text("Install saved APK") }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            apk?.delete()
+                            apk = null
+                            progress = DownloadProgress(0f, 0, 0)
+                            statusLine = ""
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Redownload") }
                 }
             }
         }
