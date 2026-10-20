@@ -6,8 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -68,6 +66,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     ) { }
 
     LaunchedEffect(Unit) {
+        engine.purgeIncomplete()
         versions = repo.getVersions()
         systemVer = installed.systemMinecraftVersion()
         if (Build.VERSION.SDK_INT >= 33) {
@@ -94,9 +93,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         val fraction = intent.getFloatExtra(DownloadService.EXTRA_FRACTION, 0f)
                         val read = intent.getLongExtra(DownloadService.EXTRA_BYTES_READ, 0L)
                         val total = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
-                        progress = DownloadProgress(fraction, read, total)
+                        val speed = intent.getLongExtra(DownloadService.EXTRA_SPEED_BPS, 0L)
+                        progress = DownloadProgress(fraction, read, total, speed)
                         downloading = true
-                        statusLine = if (read == 0L) "Resolving APK…" else "Downloading in background…"
+                        statusLine = if (read == 0L) "Resolving APK…" else "Downloading…"
                         error = null
                     }
                     DownloadService.ACTION_COMPLETE -> {
@@ -239,7 +239,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 error = null
                                 statusLine = ""
                                 progress = DownloadProgress(0f, 0, 0)
-                                downloading = false
+                                downloading = DownloadService.isRunning()
                                 apk = engine.cached("minecraft-${v.id}.apk")
                             }
                     ) {
@@ -262,7 +262,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                     error = null
                                     statusLine = ""
                                     progress = DownloadProgress(0f, 0, 0)
-                                    downloading = false
+                                    downloading = DownloadService.isRunning()
                                     apk = engine.cached("minecraft-${v.id}.apk")
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -278,7 +278,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
     val target = sheetVersion
     if (target != null) {
-        ModalBottomSheet(onDismissRequest = { sheetVersion = null }) {
+        ModalBottomSheet(onDismissRequest = { if (!downloading) sheetVersion = null }) {
             Column(
                 Modifier
                     .padding(horizontal = 24.dp)
@@ -315,16 +315,18 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
-                    val label = if (progress.bytesTotal > 0) {
-                        "${(progress.fraction * 100).roundToInt()}%  ·  ${mb(progress.bytesRead)} / ${mb(progress.bytesTotal)} MB"
-                    } else if (progress.bytesRead > 0) {
-                        "${mb(progress.bytesRead)} MB"
-                    } else {
-                        "Resolving…"
+                    val speed = formatSpeed(progress.speedBps)
+                    val label = when {
+                        progress.bytesTotal > 0 ->
+                            "${(progress.fraction * 100).roundToInt()}%  ·  ${mb(progress.bytesRead)} / ${mb(progress.bytesTotal)} MB" +
+                                if (speed.isNotEmpty()) "  ·  $speed" else ""
+                        progress.bytesRead > 0 ->
+                            "${mb(progress.bytesRead)} MB" + if (speed.isNotEmpty()) "  ·  $speed" else ""
+                        else -> "Resolving…"
                     }
                     Text(label, style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "Background download — notification stays up",
+                        "Runs in the notification · incomplete files are deleted",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -339,6 +341,14 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 if (apk == null) {
                     Button(
                         onClick = {
+                            if (DownloadService.isRunning()) {
+                                error = "A download is already running. Cancel it from the notification."
+                                return@Button
+                            }
+                            engine.preflightError(target.sizeMb)?.let {
+                                error = it
+                                return@Button
+                            }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                                 !context.packageManager.canRequestPackageInstalls()
                             ) {
@@ -349,10 +359,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                         Uri.parse("package:${context.packageName}")
                                     )
                                 )
-                                return@Button
-                            }
-                            if (settings.wifiOnlyDownloads && !isOnWifi(context)) {
-                                error = "Wi‑Fi only is on. Connect to Wi‑Fi or turn it off in Settings."
                                 return@Button
                             }
                             if (Build.VERSION.SDK_INT >= 33) {
@@ -407,6 +413,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = {
+                            if (DownloadService.isRunning()) {
+                                error = "Wait for the current download to finish"
+                                return@OutlinedButton
+                            }
                             apk?.delete()
                             apk = null
                             progress = DownloadProgress(0f, 0, 0)
@@ -424,11 +434,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 private fun mb(bytes: Long): String =
     if (bytes <= 0L) "0.0" else "%.1f".format(bytes / (1024.0 * 1024.0))
 
-private fun isOnWifi(context: Context): Boolean {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    val network = cm.activeNetwork ?: return false
-    val caps = cm.getNetworkCapabilities(network) ?: return false
-    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+private fun formatSpeed(bps: Long): String {
+    if (bps <= 0) return ""
+    val kb = bps / 1024.0
+    return if (kb >= 1024) "%.1f MB/s".format(kb / 1024.0) else "%.0f KB/s".format(kb)
 }
 
 private fun filterUrls(urls: List<String>, mirror: MirrorPref): List<String> {
