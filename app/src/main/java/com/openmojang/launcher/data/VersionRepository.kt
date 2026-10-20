@@ -33,7 +33,6 @@ data class McVersion(
 class VersionRepository {
 
     private val catalog = listOf(
-        // --- Beta ---
         McVersion(
             id = "26.70.20",
             name = "1.26.70.20",
@@ -89,7 +88,28 @@ class VersionRepository {
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-24-apk/",
             cover = "ice"
         ),
-        // --- Minecraft Patch (hotfixes) ---
+        McVersion(
+            id = "26.60.23",
+            name = "1.26.60.23",
+            patch = "1.26.60.23",
+            type = "beta",
+            date = "Sep 2026",
+            sizeMb = 500,
+            changelog = ChangelogProvider.forVersion("26.60.24"),
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-23-apk/",
+            cover = "ice"
+        ),
+        McVersion(
+            id = "26.60.21",
+            name = "1.26.60.21",
+            patch = "1.26.60.21",
+            type = "beta",
+            date = "Sep 2026",
+            sizeMb = 498,
+            changelog = ChangelogProvider.forVersion("26.60.24"),
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-21-apk/",
+            cover = "ice"
+        ),
         McVersion(
             id = "26.52",
             name = "1.26.52",
@@ -123,7 +143,6 @@ class VersionRepository {
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-45-apk/",
             cover = "patch"
         ),
-        // --- Full releases ---
         McVersion(
             id = "26.50",
             name = "1.26.50",
@@ -183,7 +202,6 @@ class VersionRepository {
         return list.distinct()
     }
 
-    /** Latest playable stable: prefer newest patch, else full release. */
     fun latestStable(): McVersion? =
         catalog.firstOrNull { it.type == "patch" }
             ?: catalog.firstOrNull { it.type == "release" }
