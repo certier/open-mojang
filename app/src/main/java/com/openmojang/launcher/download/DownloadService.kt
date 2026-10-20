@@ -13,7 +13,6 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.openmojang.launcher.MainActivity
-import com.openmojang.launcher.R
 import com.openmojang.launcher.data.DownloadEngine
 import com.openmojang.launcher.data.DownloadProgress
 import com.openmojang.launcher.data.SettingsStore
@@ -83,7 +82,6 @@ class DownloadService : Service() {
                     broadcastProgress(versionId, p, versionName)
                 }
 
-                // Size check vs catalog (allow ~15% slack for mirror variance)
                 if (sizeMb > 0) {
                     val expected = sizeMb * 1024L * 1024L
                     val actual = file.length()
@@ -97,7 +95,6 @@ class DownloadService : Service() {
                     }
                 }
 
-                // APK magic: ZIP local header PK\x03\x04
                 if (!looksLikeApk(file)) {
                     file.delete()
                     throw IllegalStateException("Downloaded file is not a valid APK")
@@ -306,8 +303,8 @@ class DownloadService : Service() {
                     val header = ByteArray(4)
                     val n = input.read(header)
                     n == 4 &&
-                        header[0] == 0x50.toByte() && // P
-                        header[1] == 0x4B.toByte() && // K
+                        header[0] == 0x50.toByte() &&
+                        header[1] == 0x4B.toByte() &&
                         header[2] == 0x03.toByte() &&
                         header[3] == 0x04.toByte()
                 }
