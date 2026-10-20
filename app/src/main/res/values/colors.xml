@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#5C3A1E</color>
-    <color name="dirt_dark">#5C3A1E</color>
-    <color name="grass_green">#5D9C3B</color>
+    <color name="ic_launcher_background">#0B1220</color>
+    <color name="peak_indigo">#1A237E</color>
+    <color name="peak_blue">#3D5AFE</color>
+    <color name="peak_gold">#FFC107</color>
+    <color name="peak_sky">#82B1FF</color>
 </resources>
