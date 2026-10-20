@@ -2,7 +2,6 @@ package com.openmojang.launcher.data
 
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,16 +22,9 @@ data class DownloadProgress(
     val bytesTotal: Long
 )
 
-/**
- * Full in-app Minecraft Bedrock APK download.
- *
- * Order:
- * 1) Known direct file.mcpedl.org URLs (no scrape)
- * 2) Version page → show_file.php form → gate HTML → DOWNLOAD_URL / .apk link
- * 3) Stream to app storage with progress, then system install sheet
- */
 class DownloadEngine(private val context: Context) {
 
+    private val settings = SettingsStore(context)
     private val memoryCookies = ConcurrentHashMap<String, MutableList<Cookie>>()
 
     private val client = OkHttpClient.Builder()
@@ -72,8 +64,6 @@ class DownloadEngine(private val context: Context) {
         onProgress: (DownloadProgress) -> Unit = {}
     ): File {
         val errors = mutableListOf<String>()
-
-        // Prefer known direct APK mirrors first (skip HTML scrape)
         val directFirst = urls.filter { it.contains(".apk", ignoreCase = true) } +
             urls.filter { !it.contains(".apk", ignoreCase = true) }
 
@@ -145,9 +135,7 @@ class DownloadEngine(private val context: Context) {
     }
 
     private fun resolveApkUrl(pageOrApkUrl: String): String {
-        if (looksLikeApkUrl(pageOrApkUrl)) {
-            return pageOrApkUrl
-        }
+        if (looksLikeApkUrl(pageOrApkUrl)) return pageOrApkUrl
 
         DIRECT_APK[pageOrApkUrl]?.let { return it }
         for ((key, direct) in DIRECT_APK) {
@@ -155,36 +143,23 @@ class DownloadEngine(private val context: Context) {
         }
 
         val pageHtml = getHtml(pageOrApkUrl)
-
-        if (looksLikeApkUrl(pageHtml) && pageHtml.length < 500) {
-            // getHtml returned a redirect URL string
-            return pageHtml.trim()
-        }
+        if (looksLikeApkUrl(pageHtml) && pageHtml.length < 500) return pageHtml.trim()
 
         APK_ABS.find(pageHtml)?.value?.let { return it }
         FILE_MCPEDL.find(pageHtml)?.value?.let { return it }
 
         val forms = FORM_BLOCK.findAll(pageHtml).map { it.value }.toList()
         if (forms.isNotEmpty()) {
-            val preferred = forms.firstOrNull { f ->
-                val label = f.lowercase()
-                (label.contains("arm64") || label.contains("no music")) &&
-                    !label.contains("armeabi-v7a")
-            } ?: forms.first()
-
+            val preferred = pickForm(forms)
             val fileId = FILE_ID.find(preferred)?.groupValues?.get(1)
                 ?: throw IllegalStateException("No file_id in form")
-            val postTitle = POST_TITLE.find(preferred)?.groupValues?.get(1)
-                ?: "Minecraft APK"
-            val postUrl = POST_URL.find(preferred)?.groupValues?.get(1)
-                ?: pageOrApkUrl
+            val postTitle = POST_TITLE.find(preferred)?.groupValues?.get(1) ?: "Minecraft APK"
+            val postUrl = POST_URL.find(preferred)?.groupValues?.get(1) ?: pageOrApkUrl
 
             val gateHtml = postShowFile(fileId, postTitle, postUrl)
-
             DOWNLOAD_URL_JS.find(gateHtml)?.groupValues?.get(1)?.let { return it }
             APK_ABS.find(gateHtml)?.value?.let { return it }
             FILE_MCPEDL.find(gateHtml)?.value?.let { return it }
-
             throw IllegalStateException("show_file gate had no APK (file_id=$fileId)")
         }
 
@@ -195,9 +170,27 @@ class DownloadEngine(private val context: Context) {
         throw IllegalStateException("No APK resolver matched")
     }
 
+    private fun pickForm(forms: List<String>): String {
+        val abi = settings.preferredAbi
+        return when (abi) {
+            AbiPref.ARM64 -> forms.firstOrNull { f ->
+                val l = f.lowercase()
+                (l.contains("arm64") || (l.contains("no music") && !l.contains("armeabi"))) &&
+                    !l.contains("armeabi-v7a")
+            } ?: forms.first()
+            AbiPref.ARM32 -> forms.firstOrNull { f ->
+                f.lowercase().contains("armeabi")
+            } ?: forms.first()
+            AbiPref.AUTO -> forms.firstOrNull { f ->
+                val l = f.lowercase()
+                (l.contains("arm64") || l.contains("no music")) && !l.contains("armeabi-v7a")
+            } ?: forms.first()
+        }
+    }
+
     private fun looksLikeApkUrl(url: String): Boolean {
         return url.contains(".apk", ignoreCase = true) &&
-            (url.startsWith("http") && !url.contains('<'))
+            url.startsWith("http") && !url.contains('<')
     }
 
     private fun getHtml(url: String): String {
@@ -208,17 +201,13 @@ class DownloadEngine(private val context: Context) {
             .header("Accept-Language", "en-US,en;q=0.9")
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("Page HTTP ${response.code}")
-            }
+            if (!response.isSuccessful) throw IllegalStateException("Page HTTP ${response.code}")
             val type = response.header("Content-Type").orEmpty()
             val finalUrl = response.request.url.toString()
             if (looksLikeApkUrl(finalUrl) ||
                 type.contains("package-archive") ||
                 type.contains("octet-stream")
-            ) {
-                return finalUrl
-            }
+            ) return finalUrl
             return response.body?.string().orEmpty()
         }
     }
@@ -238,14 +227,11 @@ class DownloadEngine(private val context: Context) {
             .post(body)
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("show_file HTTP ${response.code}")
-            }
+            if (!response.isSuccessful) throw IllegalStateException("show_file HTTP ${response.code}")
             return response.body?.string().orEmpty()
         }
     }
 
-    /** System install sheet — same UX as opening an APK from Downloads. */
     fun installApk(apkFile: File) {
         val uri = FileProvider.getUriForFile(
             context,
@@ -266,7 +252,6 @@ class DownloadEngine(private val context: Context) {
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
-        /** Verified direct APKs — skip scrape when these match. */
         private val DIRECT_APK = mapOf(
             "26.52" to "https://file.mcpedl.org/uploads_files/28-09-2026/minecraft-26-52-arm64-v8a.apk",
             "minecraft-pe-26-52-apk" to "https://file.mcpedl.org/uploads_files/28-09-2026/minecraft-26-52-arm64-v8a.apk",
