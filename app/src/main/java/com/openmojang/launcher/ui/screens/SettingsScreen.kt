@@ -128,7 +128,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     HorizontalDivider()
                     SwitchRow(
                         title = "Keep old APKs",
-                        subtitle = "Leave downloaded files after install",
+                        subtitle = "Leave completed downloads after install",
                         checked = keepOld,
                         onCheckedChange = {
                             keepOld = it
@@ -239,7 +239,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("Peak Launcher", style = MaterialTheme.typography.titleMedium)
+                            Text("Maple Launcher", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 "v0.1.0",
                                 style = MaterialTheme.typography.bodySmall,
