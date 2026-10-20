@@ -1,16 +1,19 @@
 package com.openmojang.launcher.data
 
+import android.app.ActivityManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.DocumentsContract
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Reads and writes Minecraft Bedrock options.txt.
- * Keys match what the game stores (gfx_*, etc.).
- * Access: known paths first, then SAF Uri the user picked.
+ * Also: force-stop game process, Vulkan capability probe, backups.
  */
 class OptionsEditor(private val context: Context) {
 
@@ -27,7 +30,6 @@ class OptionsEditor(private val context: Context) {
         val roots = mutableListOf<File>()
         Environment.getExternalStorageDirectory()?.let { roots += it }
         context.getExternalFilesDir(null)?.parentFile?.parentFile?.let { roots += it }
-        // Common Bedrock locations
         val relative = listOf(
             "games/com.mojang/minecraftpe/options.txt",
             "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/options.txt",
@@ -39,7 +41,6 @@ class OptionsEditor(private val context: Context) {
                 if (f.isFile) out += f
             }
         }
-        // Scoped: our own external mirror if user copied the file
         val mirror = File(context.getExternalFilesDir(null), "minecraftpe/options.txt")
         if (mirror.isFile) out += mirror
         return out.distinctBy { it.absolutePath }
@@ -100,12 +101,72 @@ class OptionsEditor(private val context: Context) {
                 return "Saved to ${f.absolutePath}"
             }
         }
-        // Write a mirror the user can copy
         val mirror = File(context.getExternalFilesDir(null), "minecraftpe/options.txt")
         if (saveToFile(mirror, options)) {
             return "Saved mirror: ${mirror.absolutePath} (copy into Minecraft folder if needed)"
         }
         return null
+    }
+
+    /** Snapshot current options into app storage. */
+    fun backup(options: Map<String, String>): String? {
+        return try {
+            val dir = File(context.getExternalFilesDir(null), "minecraftpe/backups").apply { mkdirs() }
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val file = File(dir, "options_$stamp.txt")
+            file.writeText(serialize(options))
+            file.absolutePath
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun listBackups(): List<File> {
+        val dir = File(context.getExternalFilesDir(null), "minecraftpe/backups")
+        if (!dir.isDirectory) return emptyList()
+        return dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
+            ?.sortedByDescending { it.lastModified() }
+            .orEmpty()
+    }
+
+    /** Kill Minecraft process so options.txt is not overwritten on exit. */
+    fun forceStopMinecraft(): Boolean {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            am.killBackgroundProcesses(MC_PACKAGE)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun deviceReportsVulkan(): Boolean {
+        val pm = context.packageManager
+        return pm.hasSystemFeature("android.hardware.vulkan.level") ||
+            pm.hasSystemFeature("android.hardware.vulkan.version") ||
+            pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL) ||
+            pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_VERSION)
+    }
+
+    fun vulkanLevelLabel(): String {
+        if (!deviceReportsVulkan()) return "No Vulkan feature flag"
+        return try {
+            if (Build.VERSION.SDK_INT >= 24) {
+                val level = context.packageManager.systemAvailableFeatures
+                    .firstOrNull { it.name == PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL }
+                    ?.version
+                val ver = context.packageManager.systemAvailableFeatures
+                    .firstOrNull { it.name == PackageManager.FEATURE_VULKAN_HARDWARE_VERSION }
+                    ?.version
+                buildString {
+                    append("Vulkan available")
+                    if (level != null) append(" · level $level")
+                    if (ver != null) append(" · 0x${Integer.toHexString(ver)}")
+                }
+            } else "Vulkan feature present"
+        } catch (_: Exception) {
+            "Vulkan available"
+        }
     }
 
     fun applyPreset(base: Map<String, String>, preset: Preset): Map<String, String> {
@@ -117,9 +178,12 @@ class OptionsEditor(private val context: Context) {
                 m["gfx_fancyskies"] = "0"
                 m["gfx_msaa"] = "1"
                 m["gfx_viewdistance"] = "96"
+                m["gfx_particleviewdistance"] = "50"
                 m["gfx_max_framerate"] = "60"
                 m["gfx_vsync"] = "0"
                 m["gfx_multithreaded_renderer"] = "1"
+                m["gfx_async_texture_loads"] = "1"
+                m["gfx_viewbobbing"] = "0"
                 setGraphicsApi(m, GraphicsApi.OPENGLES)
             }
             Preset.BALANCED -> {
@@ -128,9 +192,12 @@ class OptionsEditor(private val context: Context) {
                 m["gfx_fancyskies"] = "1"
                 m["gfx_msaa"] = "2"
                 m["gfx_viewdistance"] = "192"
+                m["gfx_particleviewdistance"] = "100"
                 m["gfx_max_framerate"] = "0"
                 m["gfx_vsync"] = "0"
                 m["gfx_multithreaded_renderer"] = "1"
+                m["gfx_async_texture_loads"] = "1"
+                m["gfx_viewbobbing"] = "1"
                 setGraphicsApi(m, GraphicsApi.DEFAULT)
             }
             Preset.QUALITY -> {
@@ -139,17 +206,24 @@ class OptionsEditor(private val context: Context) {
                 m["gfx_fancyskies"] = "1"
                 m["gfx_msaa"] = "4"
                 m["gfx_viewdistance"] = "256"
+                m["gfx_particleviewdistance"] = "100"
                 m["gfx_max_framerate"] = "0"
                 m["gfx_vsync"] = "0"
                 m["gfx_multithreaded_renderer"] = "1"
+                m["gfx_async_texture_loads"] = "1"
+                m["gfx_viewbobbing"] = "1"
                 setGraphicsApi(m, GraphicsApi.VULKAN)
+            }
+            Preset.FULLBRIGHT -> {
+                // Game may clamp gamma; still the real key players edit
+                m["gfx_gamma"] = "1"
+                m["gfx_smoothlighting"] = "0"
             }
         }
         return m
     }
 
     fun setGraphicsApi(m: MutableMap<String, String>, api: GraphicsApi) {
-        // Bedrock / RenderDragon builds vary; write known + experimental keys
         when (api) {
             GraphicsApi.DEFAULT -> {
                 m["gfx_graphics_api"] = "0"
@@ -202,13 +276,13 @@ class OptionsEditor(private val context: Context) {
         return options.entries.joinToString("\n") { (k, v) -> "$k:$v" } + "\n"
     }
 
-    enum class Preset { PERFORMANCE, BALANCED, QUALITY }
+    enum class Preset { PERFORMANCE, BALANCED, QUALITY, FULLBRIGHT }
     enum class GraphicsApi { DEFAULT, OPENGLES, VULKAN }
 
     companion object {
         private const val KEY_URI = "options_uri"
+        const val MC_PACKAGE = "com.mojang.minecraftpe"
 
-        /** Document tree under Android/data is blocked; user picks the file. */
         fun optionsMimeTypes(): Array<String> = arrayOf("text/plain", "*/*")
     }
 }
