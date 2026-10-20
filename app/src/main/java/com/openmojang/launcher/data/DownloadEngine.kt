@@ -2,8 +2,12 @@ package com.openmojang.launcher.data
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.StatFs
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -13,13 +17,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 data class DownloadProgress(
     val fraction: Float,
     val bytesRead: Long,
-    val bytesTotal: Long
+    val bytesTotal: Long,
+    val speedBps: Long = 0L
 )
 
 class DownloadEngine(private val context: Context) {
@@ -51,16 +59,15 @@ class DownloadEngine(private val context: Context) {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(600, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     init {
         purgeIncomplete()
     }
 
-    /** Only return a finished, valid APK. Incomplete / bad files are deleted. */
     fun cached(fileName: String): File? {
         val dir = downloadDir()
-        // kill leftover partials for this name
         File(dir, "$fileName.part").delete()
         val file = File(dir, fileName)
         if (!file.exists()) return null
@@ -71,7 +78,6 @@ class DownloadEngine(private val context: Context) {
         return file
     }
 
-    /** Remove every .part and any final file that fails APK checks. */
     fun purgeIncomplete(): Int {
         val dir = downloadDir()
         var n = 0
@@ -88,47 +94,136 @@ class DownloadEngine(private val context: Context) {
         return n
     }
 
+    fun freeSpaceBytes(): Long {
+        return try {
+            val path = downloadDir().absolutePath
+            val stat = StatFs(path)
+            stat.availableBlocksLong * stat.blockSizeLong
+        } catch (_: Exception) {
+            Long.MAX_VALUE
+        }
+    }
+
+    fun hasNetwork(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    fun isOnWifi(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    /**
+     * Preflight checks a real user hits before bytes move.
+     * @return null if ok, otherwise a short reason.
+     */
+    fun preflightError(sizeMb: Int): String? {
+        if (!hasNetwork()) return "No internet connection"
+        if (settings.wifiOnlyDownloads && !isOnWifi()) {
+            return "Wi‑Fi only is on. Connect to Wi‑Fi or turn it off in Settings."
+        }
+        val need = (sizeMb.coerceAtLeast(400) + 50) * 1024L * 1024L
+        val free = freeSpaceBytes()
+        if (free < need) {
+            val freeMb = free / (1024 * 1024)
+            return "Not enough storage · ~${freeMb} MB free, need ~${sizeMb + 50} MB"
+        }
+        return null
+    }
+
     suspend fun downloadFirst(
         urls: List<String>,
         fileName: String,
+        expectedSizeMb: Int = 0,
         onProgress: (DownloadProgress) -> Unit = {}
     ): File {
-        // Never keep a half-written final name from a previous crash
+        // Already have a good file — don't redownload
+        cached(fileName)?.let { return it }
+
+        preflightError(expectedSizeMb)?.let { throw IllegalStateException(it) }
+
         File(downloadDir(), "$fileName.part").delete()
         val existing = File(downloadDir(), fileName)
         if (existing.exists() && !isGoodApk(existing)) existing.delete()
 
         val errors = mutableListOf<String>()
-        val directFirst = urls.filter { it.contains(".apk", ignoreCase = true) } +
+        val ordered = urls.filter { it.contains(".apk", ignoreCase = true) } +
             urls.filter { !it.contains(".apk", ignoreCase = true) }
 
-        for (url in directFirst.distinct()) {
+        for (url in ordered.distinct()) {
             try {
-                return downloadApk(url, fileName, onProgress)
+                return downloadApk(url, fileName, expectedSizeMb, onProgress)
             } catch (e: Exception) {
-                // ensure no partial survives a failed mirror
                 File(downloadDir(), "$fileName.part").delete()
-                errors += "${url.take(64)} → ${e.message}"
+                val tip = friendlyError(e)
+                errors += tip
                 onProgress(DownloadProgress(0f, 0, 0))
             }
         }
-        throw IllegalStateException(
-            errors.joinToString("\n").ifEmpty { "No download URL worked" }
-        )
+
+        val summary = when {
+            errors.isEmpty() -> "No download URL worked"
+            errors.size == 1 -> errors.first()
+            else -> "All mirrors failed:\n" + errors.take(3).joinToString("\n")
+        }
+        throw IllegalStateException(summary)
     }
 
     suspend fun downloadApk(
         pageOrApkUrl: String,
         fileName: String,
+        expectedSizeMb: Int = 0,
         onProgress: (DownloadProgress) -> Unit = {}
     ): File = withContext(Dispatchers.IO) {
-        val apkUrl = resolveApkUrl(pageOrApkUrl)
-        streamToFile(apkUrl, fileName, onProgress)
+        var last: Exception? = null
+        repeat(MAX_ATTEMPTS) { attempt ->
+            try {
+                val apkUrl = resolveApkUrl(pageOrApkUrl)
+                return@withContext streamToFile(apkUrl, fileName, expectedSizeMb, onProgress)
+            } catch (e: Exception) {
+                last = e
+                File(downloadDir(), "$fileName.part").delete()
+                if (!isRetryable(e) || attempt == MAX_ATTEMPTS - 1) throw e
+                delay(1000L * (attempt + 1))
+            }
+        }
+        throw last ?: IllegalStateException("Download failed")
+    }
+
+    private fun isRetryable(e: Exception): Boolean {
+        return e is SocketTimeoutException ||
+            e is UnknownHostException ||
+            e is IOException &&
+            (e.message?.contains("reset", true) == true ||
+                e.message?.contains("timeout", true) == true ||
+                e.message?.contains("Unavailable", true) == true)
+    }
+
+    private fun friendlyError(e: Exception): String {
+        val m = e.message.orEmpty()
+        return when {
+            e is UnknownHostException -> "DNS failed · check connection"
+            e is SocketTimeoutException -> "Timed out · try again"
+            m.contains("HTML", true) -> "Mirror returned a web page, not an APK"
+            m.contains("HTTP 403") -> "Mirror blocked the download (403)"
+            m.contains("HTTP 404") -> "APK not found on mirror (404)"
+            m.contains("HTTP 5") -> "Mirror server error"
+            m.contains("storage", true) || m.contains("space", true) -> m
+            m.contains("too small", true) || m.contains("invalid", true) -> m
+            m.length > 120 -> m.take(120) + "…"
+            else -> m.ifBlank { e.javaClass.simpleName }
+        }
     }
 
     private fun streamToFile(
         apkUrl: String,
         fileName: String,
+        expectedSizeMb: Int,
         onProgress: (DownloadProgress) -> Unit
     ): File {
         val request = Request.Builder()
@@ -146,13 +241,30 @@ class DownloadEngine(private val context: Context) {
             if (type.contains("text/html", ignoreCase = true)) {
                 throw IllegalStateException("Got HTML instead of APK")
             }
-            val total = body.contentLength()
+
+            var total = body.contentLength()
+            // Catalog estimate when server hides length
+            if (total <= 0 && expectedSizeMb > 0) {
+                total = expectedSizeMb * 1024L * 1024L
+            }
+
+            if (total > 0) {
+                val free = freeSpaceBytes()
+                if (free < total + 40L * 1024 * 1024) {
+                    throw IllegalStateException(
+                        "Not enough storage · need ~${total / (1024 * 1024)} MB free"
+                    )
+                }
+            }
+
             val dir = downloadDir()
             val partFile = File(dir, "$fileName.part")
             val finalFile = File(dir, fileName)
             if (partFile.exists()) partFile.delete()
 
             try {
+                val startNs = System.nanoTime()
+                var lastEmitNs = 0L
                 body.byteStream().use { input ->
                     FileOutputStream(partFile).use { output ->
                         val buffer = ByteArray(256 * 1024)
@@ -162,21 +274,47 @@ class DownloadEngine(private val context: Context) {
                             if (read == -1) break
                             output.write(buffer, 0, read)
                             downloaded += read
-                            val fraction = if (total > 0) downloaded.toFloat() / total else 0f
-                            onProgress(DownloadProgress(fraction, downloaded, total))
+                            val now = System.nanoTime()
+                            // Throttle UI updates ~4/sec — avoids binder spam
+                            if (now - lastEmitNs > 250_000_000L || downloaded == total) {
+                                lastEmitNs = now
+                                val elapsed = ((now - startNs) / 1_000_000_000.0).coerceAtLeast(0.001)
+                                val speed = (downloaded / elapsed).toLong()
+                                val fraction = if (total > 0) {
+                                    (downloaded.toFloat() / total).coerceIn(0f, 1f)
+                                } else 0f
+                                onProgress(DownloadProgress(fraction, downloaded, total, speed))
+                            }
                         }
                         output.flush()
                     }
                 }
 
                 if (!isGoodApk(partFile)) {
+                    val len = partFile.length()
                     partFile.delete()
                     throw IllegalStateException(
-                        "Incomplete or invalid APK (${partFile.length()} B)"
+                        "Incomplete or invalid APK (${len / (1024 * 1024)} MB)"
                     )
                 }
 
-                // Promote only after validation
+                // Soft catalog size check (mirrors often differ 10–30%)
+                if (expectedSizeMb > 0) {
+                    val expected = expectedSizeMb * 1024L * 1024L
+                    val actual = partFile.length()
+                    val minOk = (expected * 0.55).toLong()
+                    val maxOk = (expected * 1.40).toLong()
+                    if (actual < minOk) {
+                        partFile.delete()
+                        throw IllegalStateException(
+                            "File too small: ${actual / (1024 * 1024)} MB (expected ~$expectedSizeMb MB)"
+                        )
+                    }
+                    if (actual > maxOk) {
+                        // unusual but keep if ZIP magic is valid — some mirrors bundle assets
+                    }
+                }
+
                 if (finalFile.exists()) finalFile.delete()
                 if (!partFile.renameTo(finalFile)) {
                     partFile.copyTo(finalFile, overwrite = true)
@@ -189,7 +327,6 @@ class DownloadEngine(private val context: Context) {
                 return finalFile
             } catch (e: Exception) {
                 partFile.delete()
-                // never leave a bad final from this attempt
                 if (finalFile.exists() && !isGoodApk(finalFile)) finalFile.delete()
                 throw e
             }
@@ -246,7 +383,7 @@ class DownloadEngine(private val context: Context) {
             return if (link.startsWith("http")) link else "https://mcpedl.org$link"
         }
 
-        throw IllegalStateException("No APK resolver matched")
+        throw IllegalStateException("No APK link found on page")
     }
 
     private fun pickForm(forms: List<String>): String {
@@ -333,6 +470,7 @@ class DownloadEngine(private val context: Context) {
 
     companion object {
         private const val MIN_APK_BYTES = 5_000_000L
+        private const val MAX_ATTEMPTS = 3
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
