@@ -111,7 +111,7 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             LargeTopAppBar(
-                title = { Text("Peak Launcher") },
+                title = { Text("Maple Launcher") },
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 ),
@@ -217,7 +217,7 @@ fun HomeScreen(
             }
 
             Text(
-                "Peak Launcher · v0.1.0",
+                "Maple Launcher · v0.1.0",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
