@@ -1,14 +1,12 @@
-# Peak Launcher
+# Maple Launcher
 
 Unofficial Minecraft Bedrock launcher for Android.
 
-Download releases, **Minecraft Patch** builds, and betas. Manage account and skins.
+Download releases, Minecraft Patch builds, and betas. Incomplete downloads are deleted automatically.
 
 **v0.1.0**
 
 ## Build
-
-Android Studio, or:
 
 ```bash
 ./gradlew assembleDebug
