@@ -62,7 +62,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     var statusLine by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var apk by remember { mutableStateOf<File?>(null) }
-    // id -> true when a good APK is on disk (avoid FS hit every frame)
     var cachedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var lastProgressPct by remember { mutableIntStateOf(-1) }
 
@@ -110,7 +109,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         val total = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
                         val speed = intent.getLongExtra(DownloadService.EXTRA_SPEED_BPS, 0L)
                         val pct = if (total > 0) (fraction * 100).toInt() else -1
-                        // Skip tiny progress ticks that only cause lag
                         if (pct >= 0 && pct == lastProgressPct && read > 0) return
                         lastProgressPct = pct
                         progress = DownloadProgress(fraction, read, total, speed)
@@ -160,10 +158,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         onDispose {
-            try {
-                context.unregisterReceiver(receiver)
-            } catch (_: Exception) {
-            }
+            try { context.unregisterReceiver(receiver) } catch (_: Exception) { }
         }
     }
 
@@ -202,7 +197,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             systemVer?.let { ver ->
                 val match = repo.findByInstalled(ver)
                 ListItem(
-                    headlineContent = { Text("Installed") },
+                    headlineContent = { Text("Installed on device") },
                     supportingContent = {
                         Text(
                             buildString {
@@ -212,7 +207,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         )
                     },
                     trailingContent = {
-                        TextButton(onClick = { installed.launchSystemMinecraft() }) { Text("Open") }
+                        TextButton(onClick = { installed.launchSystemMinecraft() }) { Text("Play") }
                     }
                 )
                 HorizontalDivider()
@@ -221,25 +216,19 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 TextButton(
                     onClick = { apkInstaller.openUnknownSourcesSettings() },
                     modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Text("Allow this app to install apps")
-                }
+                ) { Text("Allow this app to install apps") }
             }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 singleLine = true,
                 label = { Text("Search") },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                 placeholder = { Text("1.26.52.3, patch, ice…") }
             )
             Row(
-                Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(selected = filter == "all", onClick = { filter = "all" }, label = { Text("All") })
@@ -253,18 +242,17 @@ fun VersionManagerScreen(onBack: () -> Unit) {
             ) {
                 items(shown, key = { it.id }) { v ->
                     val isCached = v.id in cachedIds
+                    val already = versionLooksInstalled(v, systemVer)
                     ElevatedCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                sheetVersion = v
-                                error = null
-                                statusLine = ""
-                                progress = DownloadProgress(0f, 0, 0)
-                                lastProgressPct = -1
-                                downloading = DownloadService.isRunning()
-                                apk = if (isCached) engine.cached("minecraft-${v.id}.apk") else null
-                            }
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            sheetVersion = v
+                            error = null
+                            statusLine = ""
+                            progress = DownloadProgress(0f, 0, 0)
+                            lastProgressPct = -1
+                            downloading = DownloadService.isRunning()
+                            apk = if (isCached) engine.cached("minecraft-${v.id}.apk") else null
+                        }
                     ) {
                         VersionCover(version = v, height = 88.dp)
                         Column(Modifier.padding(12.dp)) {
@@ -273,7 +261,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 buildString {
                                     append(v.typeLabel)
                                     append(" · ${v.date} · ~${v.sizeMb} MB")
-                                    if (isCached) append(" · saved")
+                                    when {
+                                        already -> append(" · on device")
+                                        isCached -> append(" · saved")
+                                    }
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -281,6 +272,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             Spacer(Modifier.height(8.dp))
                             FilledTonalButton(
                                 onClick = {
+                                    if (already) {
+                                        installed.launchSystemMinecraft()
+                                        return@FilledTonalButton
+                                    }
                                     sheetVersion = v
                                     error = null
                                     statusLine = ""
@@ -291,7 +286,13 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(if (isCached) "Install" else "Download")
+                                Text(
+                                    when {
+                                        already -> "Play"
+                                        isCached -> "Install"
+                                        else -> "Download"
+                                    }
+                                )
                             }
                         }
                     }
@@ -321,21 +322,11 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
-
                 VersionScreenshotStrip(version = target)
-
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "What's new",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("What's new", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    target.changelog,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(target.changelog, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(20.dp))
 
                 if (statusLine.isNotEmpty()) {
@@ -345,9 +336,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
 
                 if (downloading || progress.bytesRead > 0L) {
                     LinearProgressIndicator(
-                        progress = {
-                            if (progress.bytesTotal > 0) progress.fraction.coerceIn(0f, 1f) else 0f
-                        },
+                        progress = { if (progress.bytesTotal > 0) progress.fraction.coerceIn(0f, 1f) else 0f },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -361,11 +350,6 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         else -> "Resolving…"
                     }
                     Text(label, style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        "Runs in the notification · incomplete files are deleted",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -374,7 +358,34 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                 }
 
-                if (apk == null) {
+                val alreadyOnDevice = versionLooksInstalled(target, systemVer)
+
+                if (alreadyOnDevice) {
+                    Text(
+                        "This version matches the Minecraft app on your device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { installed.launchSystemMinecraft() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Play Minecraft") }
+                    if (apk != null) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    statusLine = "Reinstalling…"
+                                    engine.installApk(apk!!)
+                                } catch (e: Exception) {
+                                    error = e.message
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Reinstall APK") }
+                    }
+                } else if (apk == null) {
                     Button(
                         onClick = {
                             if (DownloadService.isRunning()) {
@@ -446,7 +457,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Install saved APK") }
+                    ) { Text("Install") }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = {
@@ -466,6 +477,17 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+private fun versionLooksInstalled(v: McVersion, systemVer: String?): Boolean {
+    if (systemVer.isNullOrBlank()) return false
+    val keys = listOf(v.patch, v.name, v.id, "1.${v.id}")
+        .filter { it.isNotBlank() }
+        .distinct()
+    return keys.any { k ->
+        systemVer.contains(k, ignoreCase = true) ||
+            k.contains(systemVer, ignoreCase = true)
     }
 }
 
