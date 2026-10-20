@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Search
@@ -37,6 +38,7 @@ import com.openmojang.launcher.data.SettingsStore
 import com.openmojang.launcher.data.VersionRepository
 import com.openmojang.launcher.download.DownloadService
 import com.openmojang.launcher.ui.components.VersionCover
+import com.openmojang.launcher.ui.components.VersionScreenshotStrip
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -60,14 +62,27 @@ fun VersionManagerScreen(onBack: () -> Unit) {
     var statusLine by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var apk by remember { mutableStateOf<File?>(null) }
+    // id -> true when a good APK is on disk (avoid FS hit every frame)
+    var cachedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var lastProgressPct by remember { mutableIntStateOf(-1) }
 
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
 
+    fun refreshCacheMap(list: List<McVersion>) {
+        val set = HashSet<String>()
+        for (v in list) {
+            if (engine.cached("minecraft-${v.id}.apk") != null) set += v.id
+        }
+        cachedIds = set
+    }
+
     LaunchedEffect(Unit) {
         engine.purgeIncomplete()
-        versions = repo.getVersions()
+        val list = repo.getVersions()
+        versions = list
+        refreshCacheMap(list)
         systemVer = installed.systemMinecraftVersion()
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
@@ -94,6 +109,10 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         val read = intent.getLongExtra(DownloadService.EXTRA_BYTES_READ, 0L)
                         val total = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
                         val speed = intent.getLongExtra(DownloadService.EXTRA_SPEED_BPS, 0L)
+                        val pct = if (total > 0) (fraction * 100).toInt() else -1
+                        // Skip tiny progress ticks that only cause lag
+                        if (pct >= 0 && pct == lastProgressPct && read > 0) return
+                        lastProgressPct = pct
                         progress = DownloadProgress(fraction, read, total, speed)
                         downloading = true
                         statusLine = if (read == 0L) "Resolving APK…" else "Downloading…"
@@ -106,6 +125,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                         val bytes = intent.getLongExtra(DownloadService.EXTRA_BYTES_TOTAL, 0L)
                         apk = path?.let { File(it) }
                         downloading = false
+                        lastProgressPct = 100
                         statusLine = "Done · ${mb(bytes)} MB" +
                             if (settings.installAfterDownload) " · install started" else ""
                         progress = DownloadProgress(1f, bytes, bytes)
@@ -120,6 +140,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                     installedAt = System.currentTimeMillis()
                                 )
                             )
+                            cachedIds = cachedIds + v.id
                         }
                     }
                     DownloadService.ACTION_ERROR -> {
@@ -146,21 +167,22 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         }
     }
 
-    val shown = versions.filter { v ->
-        val typeOk = when (filter) {
-            "release" -> v.type == "release"
-            "beta" -> v.type == "beta"
-            "patch" -> v.type == "patch"
-            else -> true
+    val shown = remember(versions, filter, query) {
+        versions.filter { v ->
+            val typeOk = when (filter) {
+                "release" -> v.type == "release"
+                "beta" -> v.type == "beta"
+                "patch" -> v.type == "patch"
+                else -> true
+            }
+            val q = query.trim()
+            val queryOk = q.isEmpty() ||
+                v.name.contains(q, ignoreCase = true) ||
+                v.patch.contains(q, ignoreCase = true) ||
+                v.id.contains(q, ignoreCase = true) ||
+                v.typeLabel.contains(q, ignoreCase = true)
+            typeOk && queryOk
         }
-        val q = query.trim()
-        val queryOk = q.isEmpty() ||
-            v.name.contains(q, ignoreCase = true) ||
-            v.patch.contains(q, ignoreCase = true) ||
-            v.id.contains(q, ignoreCase = true) ||
-            v.typeLabel.contains(q, ignoreCase = true) ||
-            v.changelog.contains(q, ignoreCase = true)
-        typeOk && queryOk
     }
 
     Scaffold(
@@ -230,7 +252,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(shown, key = { it.id }) { v ->
-                    val cached = engine.cached("minecraft-${v.id}.apk")
+                    val isCached = v.id in cachedIds
                     ElevatedCard(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -239,8 +261,9 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 error = null
                                 statusLine = ""
                                 progress = DownloadProgress(0f, 0, 0)
+                                lastProgressPct = -1
                                 downloading = DownloadService.isRunning()
-                                apk = engine.cached("minecraft-${v.id}.apk")
+                                apk = if (isCached) engine.cached("minecraft-${v.id}.apk") else null
                             }
                     ) {
                         VersionCover(version = v, height = 88.dp)
@@ -250,7 +273,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                 buildString {
                                     append(v.typeLabel)
                                     append(" · ${v.date} · ~${v.sizeMb} MB")
-                                    if (cached != null) append(" · saved ${mb(cached.length())} MB")
+                                    if (isCached) append(" · saved")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -262,12 +285,13 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                                     error = null
                                     statusLine = ""
                                     progress = DownloadProgress(0f, 0, 0)
+                                    lastProgressPct = -1
                                     downloading = DownloadService.isRunning()
-                                    apk = engine.cached("minecraft-${v.id}.apk")
+                                    apk = if (isCached) engine.cached("minecraft-${v.id}.apk") else null
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(if (cached != null) "Install" else "Download")
+                                Text(if (isCached) "Install" else "Download")
                             }
                         }
                     }
@@ -281,6 +305,8 @@ fun VersionManagerScreen(onBack: () -> Unit) {
         ModalBottomSheet(onDismissRequest = { if (!downloading) sheetVersion = null }) {
             Column(
                 Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 32.dp)
                     .navigationBarsPadding()
@@ -294,7 +320,17 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
+
+                VersionScreenshotStrip(version = target)
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "What's new",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
                 Text(
                     target.changelog,
                     style = MaterialTheme.typography.bodyMedium,
@@ -372,6 +408,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             error = null
                             statusLine = "Starting background download…"
                             progress = DownloadProgress(0f, 0, 0)
+                            lastProgressPct = -1
                             val urls = filterUrls(repo.urlsFor(target), settings.preferredMirror)
                             DownloadService.start(
                                 context = context,
@@ -419,6 +456,7 @@ fun VersionManagerScreen(onBack: () -> Unit) {
                             }
                             apk?.delete()
                             apk = null
+                            cachedIds = cachedIds - target.id
                             progress = DownloadProgress(0f, 0, 0)
                             statusLine = ""
                             error = null
