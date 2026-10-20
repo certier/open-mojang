@@ -1,11 +1,11 @@
 package com.openmojang.launcher.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -40,15 +40,8 @@ private val MinecraftDarkScheme = darkColorScheme(
     onError = TextLight
 )
 
-// local helper — Color already imported via other theme files in same package
-private fun Color(hex: Long) = androidx.compose.ui.graphics.Color(hex)
-
 @Composable
-fun OpenMojangTheme(
-    darkTheme: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = MinecraftDarkScheme
+fun OpenMojangTheme(content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -60,7 +53,7 @@ fun OpenMojangTheme(
     }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = MinecraftDarkScheme,
         typography = OpenMojangTypography,
         shapes = OpenMojangShapes,
         content = content
