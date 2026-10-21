@@ -26,7 +26,6 @@ data class DeviceCodeSession(
 
 /**
  * Microsoft login via login.live.com device code (Xbox client) → Xbox user token → XSTS.
- * Azure AD v2 consumers endpoint rejects this client id.
  */
 class AuthManager(private val context: Context) {
 
@@ -230,6 +229,93 @@ class AuthManager(private val context: Context) {
                 throw IllegalStateException("HTTP ${resp.code}: ${text.take(300)}")
             }
             return jsonOut
+        }
+    }
+
+    suspend fun loadLiveProfile(account: MsAccount): Result<LiveProfile> = withContext(Dispatchers.IO) {
+        try {
+            val token = account.accessToken
+            if (token.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("Not signed in"))
+            }
+            var gamerscore = account.gamerscore
+            var gamertag = account.gamertag
+            runCatching {
+                val req = Request.Builder()
+                    .url("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamerscore,Gamertag")
+                    .get()
+                    .header("Authorization", token)
+                    .header("x-xbl-contract-version", "2")
+                    .header("Accept", "application/json")
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (resp.isSuccessful) {
+                        val profileUsers = JSONObject(text).optJSONArray("profileUsers")
+                        val settings = profileUsers?.optJSONObject(0)?.optJSONArray("settings")
+                        if (settings != null) {
+                            for (i in 0 until settings.length()) {
+                                val s = settings.getJSONObject(i)
+                                when (s.optString("id")) {
+                                    "Gamerscore" -> gamerscore = s.optString("value", "0").toIntOrNull() ?: gamerscore
+                                    "Gamertag" -> {
+                                        val g = s.optString("value")
+                                        if (g.isNotBlank()) gamertag = g
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val achievements = mutableListOf<XboxAchievement>()
+            val titleId = "1739947436"
+            runCatching {
+                val url =
+                    "https://achievements.xboxlive.com/users/xuid(${account.uuid})/achievements?titleId=$titleId&maxItems=50&orderBy=UnlockTime"
+                val req = Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Authorization", token)
+                    .header("x-xbl-contract-version", "2")
+                    .header("Accept", "application/json")
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (resp.isSuccessful) {
+                        val arr = JSONObject(text).optJSONArray("achievements") ?: return@use
+                        for (i in 0 until arr.length()) {
+                            val a = arr.getJSONObject(i)
+                            val pct = if (a.optString("progressState") == "Achieved") 100 else 0
+                            achievements += XboxAchievement(
+                                id = a.optString("id"),
+                                name = a.optString("name"),
+                                description = a.optString("description").ifBlank {
+                                    a.optString("lockedDescription")
+                                },
+                                progressState = a.optString("progressState"),
+                                percentComplete = pct
+                            )
+                        }
+                    }
+                }
+            }
+            if (gamerscore >= 0) {
+                store.save(account.copy(gamertag = gamertag, gamerscore = gamerscore))
+            }
+            val unlocked = achievements.count { it.progressState == "Achieved" || it.percentComplete >= 100 }
+            Result.success(
+                LiveProfile(
+                    gamertag = gamertag,
+                    xuid = account.uuid,
+                    gamerscore = gamerscore,
+                    achievements = achievements,
+                    unlockedCount = unlocked,
+                    totalCount = achievements.size
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
