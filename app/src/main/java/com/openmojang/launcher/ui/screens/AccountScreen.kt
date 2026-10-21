@@ -2,6 +2,8 @@ package com.openmojang.launcher.ui.screens
 
 import android.app.Activity
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
@@ -14,6 +16,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.openmojang.launcher.data.AuthManager
 import com.openmojang.launcher.data.DeviceCodeSession
+import com.openmojang.launcher.data.LiveProfile
 import com.openmojang.launcher.data.MsAccount
 import kotlinx.coroutines.launch
 
@@ -25,11 +28,11 @@ fun AccountScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var account by remember { mutableStateOf<MsAccount?>(auth.current()) }
+    var profile by remember { mutableStateOf<LiveProfile?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var session by remember { mutableStateOf<DeviceCodeSession?>(null) }
-    var editName by remember { mutableStateOf(account?.gamertag.orEmpty()) }
-    var editing by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
 
     fun fail(t: Throwable) {
         error = listOfNotNull(t.message, t.cause?.message)
@@ -37,6 +40,31 @@ fun AccountScreen(onBack: () -> Unit) {
             ?: t.toString()
         loading = false
         session = null
+    }
+
+    fun refreshProfile(acc: MsAccount) {
+        scope.launch {
+            loading = true
+            error = null
+            auth.loadLiveProfile(acc)
+                .onSuccess {
+                    profile = it
+                    account = auth.current()
+                    status = if (it.totalCount == 0)
+                        "Signed in · Gamerscore loaded (achievements empty or title locked)"
+                    else
+                        "Signed in · ${it.unlockedCount}/${it.totalCount} Minecraft achievements"
+                }
+                .onFailure { fail(it) }
+            loading = false
+        }
+    }
+
+    LaunchedEffect(account?.uuid) {
+        val acc = account
+        if (acc != null && acc.accessToken.isNotBlank() && profile == null) {
+            refreshProfile(acc)
+        }
     }
 
     Scaffold(
@@ -51,155 +79,183 @@ fun AccountScreen(onBack: () -> Unit) {
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(24.dp))
-            Icon(
-                Icons.Filled.AccountCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(72.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-
-            when {
-                loading && session != null -> {
-                    Text("Enter this code on Microsoft", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
+        if (account != null) {
+            val acc = account!!
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Icon(
+                        Icons.Filled.AccountCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(72.dp)
+                    )
+                    Text(acc.gamertag, style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        session!!.userCode,
-                        style = MaterialTheme.typography.headlineMedium,
+                        "XUID ${acc.uuid}",
+                        style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        session!!.verificationUri,
-                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(12.dp))
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Waiting for you to finish in the browser…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    TextButton(
-                        onClick = {
-                            (context as? Activity)?.let {
-                                auth.openVerification(it, session!!.verificationUri)
+                }
+                item {
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Xbox profile", style = MaterialTheme.typography.titleSmall)
+                            val gs = profile?.gamerscore ?: acc.gamerscore
+                            Text(
+                                if (gs >= 0) "Gamerscore · $gs" else "Gamerscore · —",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                "Minecoins live in the Minecraft Marketplace after the game signs into Xbox — Maple shows Gamerscore + title achievements from Xbox Live.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            status?.let {
+                                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
                         }
-                    ) { Text("Open Microsoft link again") }
+                    }
                 }
-                loading -> {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(12.dp))
-                    Text("Starting Microsoft sign-in…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { account?.let { refreshProfile(it) } },
+                            enabled = !loading
+                        ) { Text(if (loading) "Loading…" else "Refresh") }
+                        OutlinedButton(onClick = {
+                            auth.signOut()
+                            account = null
+                            profile = null
+                            status = null
+                        }) { Text("Sign out") }
+                    }
                 }
-                account == null -> {
+                item {
                     Text(
-                        "Sign in with the Microsoft account that owns Bedrock.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        "Minecraft achievements",
+                        style = MaterialTheme.typography.titleMedium
                     )
-                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "Device code login — enter the code at microsoft.com/link",
+                        "From Xbox Live for title Minecraft (Bedrock).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(24.dp))
+                }
+                val list = profile?.achievements.orEmpty()
+                if (list.isEmpty() && !loading) {
+                    item {
+                        Text(
+                            "No achievements returned yet. Refresh after the Xbox profile has Minecraft progress, or play on this account first.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(list, key = { it.id }) { a ->
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(a.name, style = MaterialTheme.typography.titleSmall)
+                            if (a.description.isNotBlank()) {
+                                Text(
+                                    a.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                if (a.progressState == "Achieved" || a.percentComplete >= 100)
+                                    "Unlocked"
+                                else
+                                    "In progress · ${a.percentComplete}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(24.dp))
+                Icon(
+                    Icons.Filled.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(72.dp)
+                )
+                Spacer(Modifier.height(16.dp))
+                Text("Not signed in", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Device code login — enter the code at microsoft.com/link",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(24.dp))
+                session?.let { s ->
+                    Text("Code", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        s.userCode,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(s.verificationUri, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = {
+                        (context as? Activity)?.let { auth.openVerification(it, s.verificationUri) }
+                    }) { Text("Open microsoft.com/link") }
+                    Spacer(Modifier.height(8.dp))
+                    if (loading) {
+                        CircularProgressIndicator()
+                        Text("Waiting for approval…", style = MaterialTheme.typography.bodySmall)
+                    }
+                } ?: run {
                     Button(
                         onClick = {
-                            loading = true
-                            error = null
-                            session = null
                             scope.launch {
-                                val activity = context as? Activity
-                                if (activity == null) {
-                                    error = "No activity"
-                                    loading = false
-                                    return@launch
-                                }
+                                loading = true
+                                error = null
                                 auth.startDeviceCode()
                                     .onSuccess { s ->
                                         session = s
-                                        auth.openVerification(activity, s.verificationUri)
+                                        loading = true
+                                        (context as? Activity)?.let {
+                                            auth.openVerification(it, s.verificationUri)
+                                        }
                                         auth.pollDeviceCode(s)
-                                            .onSuccess {
-                                                account = it
-                                                editName = it.gamertag
-                                                loading = false
+                                            .onSuccess { acc ->
+                                                account = acc
                                                 session = null
+                                                loading = false
+                                                refreshProfile(acc)
                                             }
                                             .onFailure { fail(it) }
                                     }
                                     .onFailure { fail(it) }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign in with Microsoft") }
+                        enabled = !loading
+                    ) { Text(if (loading) "Starting…" else "Sign in with Microsoft") }
                 }
-                else -> {
-                    Text(account!!.gamertag, style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        "ID ${account!!.uuid}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                error?.let {
                     Spacer(Modifier.height(16.dp))
-                    if (editing) {
-                        OutlinedTextField(
-                            value = editName,
-                            onValueChange = { editName = it },
-                            label = { Text("Display name") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                val updated = account!!.copy(gamertag = editName.trim().ifBlank { account!!.gamertag })
-                                auth.current()
-                                com.openmojang.launcher.data.AccountStore(context).save(updated)
-                                account = updated
-                                editing = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Save") }
-                    } else {
-                        OutlinedButton(
-                            onClick = { editing = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Edit display name") }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(
-                        onClick = {
-                            auth.signOut()
-                            account = null
-                            editName = ""
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign out") }
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-            }
-
-            error?.let {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
             }
         }
     }
