@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class DownloadService : Service() {
 
@@ -56,13 +57,14 @@ class DownloadService : Service() {
         }
 
         ensureChannel()
-        val notification = buildNotification(versionName, 0, -1, "Starting…")
+        val notification = buildNotification(versionName, 0f, -1L, "Starting…")
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIF_ID, notification)
         }
 
+        running.set(true)
         job = scope.launch {
             val engine = DownloadEngine(applicationContext)
             try {
@@ -92,6 +94,7 @@ class DownloadService : Service() {
             } catch (e: Exception) {
                 sendError(versionId, e.message ?: "Download failed")
             } finally {
+                running.set(false)
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf()
             }
@@ -196,7 +199,8 @@ class DownloadService : Service() {
         const val EXTRA_PATH = "path"
         const val EXTRA_MESSAGE = "message"
 
-        fun isRunning(): Boolean = false
+        private val running = AtomicBoolean(false)
+        fun isRunning(): Boolean = running.get()
 
         fun start(
             context: Context,
