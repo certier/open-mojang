@@ -91,6 +91,8 @@ class SkinManager(private val context: Context) {
     fun activeId(): String? =
         if (activeFile.isFile) activeFile.readText().trim().ifBlank { null } else null
 
+    fun importFromUri(uri: Uri, name: String): LocalSkin? = importPng(uri, name)
+
     fun importPng(uri: Uri, name: String): LocalSkin? {
         return try {
             val id = UUID.randomUUID().toString().take(8)
@@ -119,6 +121,17 @@ class SkinManager(private val context: Context) {
         saveIndex(all)
         File(skinsDir, "$id.png").delete()
         if (activeId() == id) activeFile.writeText(all.firstOrNull()?.id ?: "steve")
+    }
+
+    fun rename(id: String, newName: String): Boolean {
+        val name = newName.trim()
+        if (name.isEmpty()) return false
+        val all = readAll().map {
+            if (it.id == id) it.copy(name = name) else it
+        }
+        if (all.none { it.id == id }) return false
+        saveIndex(all)
+        return true
     }
 
     fun headBitmap(skin: LocalSkin): Bitmap? {
