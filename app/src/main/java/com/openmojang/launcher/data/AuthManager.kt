@@ -24,9 +24,6 @@ data class DeviceCodeSession(
     val expiresIn: Int
 )
 
-/**
- * Microsoft login via login.live.com device code (Xbox client) → Xbox user token → XSTS.
- */
 class AuthManager(private val context: Context) {
 
     private val store = AccountStore(context)
@@ -240,9 +237,10 @@ class AuthManager(private val context: Context) {
             }
             var gamerscore = account.gamerscore
             var gamertag = account.gamertag
+            var avatarUrl = ""
             runCatching {
                 val req = Request.Builder()
-                    .url("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamerscore,Gamertag")
+                    .url("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamerscore,Gamertag,GameDisplayPicRaw")
                     .get()
                     .header("Authorization", token)
                     .header("x-xbl-contract-version", "2")
@@ -261,6 +259,10 @@ class AuthManager(private val context: Context) {
                                     "Gamertag" -> {
                                         val g = s.optString("value")
                                         if (g.isNotBlank()) gamertag = g
+                                    }
+                                    "GameDisplayPicRaw" -> {
+                                        val pic = s.optString("value")
+                                        if (pic.isNotBlank()) avatarUrl = pic
                                     }
                                 }
                             }
@@ -287,6 +289,16 @@ class AuthManager(private val context: Context) {
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
                             val pct = if (a.optString("progressState") == "Achieved") 100 else 0
+                            val media = a.optJSONArray("mediaAssets")
+                            var icon = ""
+                            if (media != null) {
+                                for (mi in 0 until media.length()) {
+                                    val m = media.getJSONObject(mi)
+                                    val u = m.optString("url")
+                                    if (u.isNotBlank()) { icon = u; break }
+                                }
+                            }
+                            val rarity = a.optJSONObject("rarity")?.optString("category").orEmpty()
                             achievements += XboxAchievement(
                                 id = a.optString("id"),
                                 name = a.optString("name"),
@@ -294,7 +306,9 @@ class AuthManager(private val context: Context) {
                                     a.optString("lockedDescription")
                                 },
                                 progressState = a.optString("progressState"),
-                                percentComplete = pct
+                                percentComplete = pct,
+                                iconUrl = icon,
+                                rarity = rarity
                             )
                         }
                     }
@@ -309,6 +323,7 @@ class AuthManager(private val context: Context) {
                     gamertag = gamertag,
                     xuid = account.uuid,
                     gamerscore = gamerscore,
+                    avatarUrl = avatarUrl,
                     achievements = achievements,
                     unlockedCount = unlocked,
                     totalCount = achievements.size
