@@ -69,19 +69,21 @@ fun ModifyScreen() {
 
     fun reload() {
         hasAllFiles = editor.hasFullStorageAccess()
+        val before = editor.candidateFiles().map { it.absolutePath }.toSet()
         val loaded = editor.loadBest()
         if (loaded == null) {
             sourceLabel = if (!hasAllFiles) {
                 "Need All files access · tap Grant below"
             } else {
-                "No options.txt found · open Minecraft once then Reload"
+                "Could not create options.txt · check storage permission"
             }
-            options = emptyMap()
-            message = null
+            applyMap(editor.defaultOptions())
+            message = "Using in-app defaults until a file can be written"
         } else {
             sourceLabel = loaded.first
             applyMap(loaded.second)
-            message = "Loaded"
+            val created = loaded.first != "SAF" && loaded.first !in before
+            message = if (created) "Created options.txt at ${loaded.first}" else "Loaded"
         }
     }
 
@@ -192,25 +194,25 @@ fun ModifyScreen() {
             ) {
                 AssistChip(
                     onClick = {
-                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.PERFORMANCE))
+                        applyMap(editor.applyPreset(options.ifEmpty { editor.defaultOptions() }, Preset.PERFORMANCE))
                     },
                     label = { Text("Perf") }
                 )
                 AssistChip(
                     onClick = {
-                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.BALANCED))
+                        applyMap(editor.applyPreset(options.ifEmpty { editor.defaultOptions() }, Preset.BALANCED))
                     },
                     label = { Text("Balanced") }
                 )
                 AssistChip(
                     onClick = {
-                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.QUALITY))
+                        applyMap(editor.applyPreset(options.ifEmpty { editor.defaultOptions() }, Preset.QUALITY))
                     },
                     label = { Text("Quality") }
                 )
                 AssistChip(
                     onClick = {
-                        applyMap(editor.applyPreset(options.ifEmpty { emptyMap() }, Preset.FULLBRIGHT))
+                        applyMap(editor.applyPreset(options.ifEmpty { editor.defaultOptions() }, Preset.FULLBRIGHT))
                     },
                     label = { Text("Bright") }
                 )
@@ -351,7 +353,7 @@ fun ModifyScreen() {
             }
 
             Text(
-                "Grant All files access once so the app finds options.txt itself. Force-stop before Apply.",
+                "If options.txt is missing, the app creates one. Grant All files access so it lands in the Minecraft folder.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
