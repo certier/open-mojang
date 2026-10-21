@@ -9,11 +9,17 @@ data class McVersion(
     val patch: String = "",
     val type: String,
     val date: String,
-    val sizeMb: Int,
+    /** Approximate APK size without music pack (slim). */
+    val sizeMbSlim: Int,
+    /** Approximate APK size with music (full). Real downloads often land near this. */
+    val sizeMbFull: Int,
     val downloadUrl: String,
     val changelog: String = "",
     val cover: String = "grass"
 ) {
+    /** Legacy single field — prefer [estimatedMb]. */
+    val sizeMb: Int get() = sizeMbFull
+
     val displayName: String
         get() = name.ifBlank { id }
 
@@ -24,6 +30,18 @@ data class McVersion(
             "patch" -> "Patch"
             else -> type.replaceFirstChar { it.uppercase() }
         }
+
+    fun estimatedMb(music: MusicPref): Int = when (music) {
+        MusicPref.WITH_MUSIC -> sizeMbFull
+        MusicPref.NO_MUSIC -> sizeMbSlim
+        MusicPref.AUTO -> sizeMbFull
+    }
+
+    fun sizeLabel(music: MusicPref): String = when (music) {
+        MusicPref.WITH_MUSIC -> "~${sizeMbFull} MB with music"
+        MusicPref.NO_MUSIC -> "~${sizeMbSlim} MB no music"
+        MusicPref.AUTO -> "~${sizeMbFull} MB (full) / ~${sizeMbSlim} MB slim"
+    }
 }
 
 class VersionRepository {
@@ -40,7 +58,8 @@ class VersionRepository {
             patch = "1.26.70.20",
             type = "beta",
             date = "2026-10",
-            sizeMb = 210,
+            sizeMbSlim = 210,
+            sizeMbFull = 560,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-70-20-apk/",
             changelog = ChangelogProvider.forVersion("26.70.20"),
             cover = "ice"
@@ -51,7 +70,8 @@ class VersionRepository {
             patch = "1.26.60.30",
             type = "beta",
             date = "2026-09",
-            sizeMb = 205,
+            sizeMbSlim = 205,
+            sizeMbFull = 555,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-30-apk/",
             changelog = ChangelogProvider.forVersion("26.60.30"),
             cover = "ice"
@@ -62,7 +82,8 @@ class VersionRepository {
             patch = "1.26.60.29",
             type = "beta",
             date = "2026-09",
-            sizeMb = 204,
+            sizeMbSlim = 204,
+            sizeMbFull = 554,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-29-apk/",
             changelog = ChangelogProvider.forVersion("26.60.29"),
             cover = "ice"
@@ -73,7 +94,8 @@ class VersionRepository {
             patch = "1.26.60.28",
             type = "beta",
             date = "2026-09",
-            sizeMb = 203,
+            sizeMbSlim = 203,
+            sizeMbFull = 553,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-60-28-apk/",
             changelog = ChangelogProvider.forVersion("26.60.28"),
             cover = "ice"
@@ -81,13 +103,14 @@ class VersionRepository {
         McVersion(
             id = "26.52",
             name = "1.26.52",
-            patch = "1.26.52.3",
-            type = "patch",
+            patch = "1.26.52",
+            type = "release",
             date = "2026-09",
-            sizeMb = 198,
+            sizeMbSlim = 198,
+            sizeMbFull = 548,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-52-apk/",
             changelog = ChangelogProvider.forVersion("26.52"),
-            cover = "patch"
+            cover = "grass"
         ),
         McVersion(
             id = "26.50",
@@ -95,10 +118,11 @@ class VersionRepository {
             patch = "1.26.50",
             type = "release",
             date = "2026-08",
-            sizeMb = 196,
+            sizeMbSlim = 196,
+            sizeMbFull = 545,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-50-apk/",
             changelog = ChangelogProvider.forVersion("26.50"),
-            cover = "sulfur"
+            cover = "grass"
         ),
         McVersion(
             id = "26.30",
@@ -106,64 +130,53 @@ class VersionRepository {
             patch = "1.26.30",
             type = "release",
             date = "2026-07",
-            sizeMb = 190,
+            sizeMbSlim = 190,
+            sizeMbFull = 530,
             downloadUrl = "https://mcpedl.org/minecraft-pe-26-30-apk/",
             changelog = ChangelogProvider.forVersion("26.30"),
-            cover = "forest"
+            cover = "grass"
         ),
         McVersion(
-            id = "21.0",
-            name = "1.21",
-            patch = "1.21.0",
+            id = "26.0",
+            name = "1.26.0",
+            patch = "1.26.0",
             type = "release",
-            date = "2024",
-            sizeMb = 180,
-            downloadUrl = "https://mcpedl.org/minecraft-pe-1-21-apk/",
-            changelog = ChangelogProvider.forVersion("21.0"),
+            date = "2026-06",
+            sizeMbSlim = 180,
+            sizeMbFull = 520,
+            downloadUrl = "https://mcpedl.org/minecraft-pe-26-0-apk/",
+            changelog = ChangelogProvider.forVersion("26.0"),
             cover = "grass"
         )
     )
 
     suspend fun getVersions(): List<McVersion> = withContext(Dispatchers.IO) {
-        catalog.sortedByDescending {
-            UpdateChecker.versionKey(it.patch.ifBlank { it.name })
-        }
+        catalog
     }
 
     fun findByInstalled(systemVer: String?): McVersion? {
         if (systemVer.isNullOrBlank()) return null
-        val cleaned = systemVer.trim()
-        catalog.firstOrNull { it.patch.equals(cleaned, true) || it.name.equals(cleaned, true) }
-            ?.let { return it }
-        catalog.firstOrNull { v ->
-            cleaned.contains(v.patch) || v.patch.contains(cleaned) ||
-                cleaned.contains(v.name) || cleaned.contains(v.id) ||
-                cleaned.replace("1.", "").contains(v.id)
-        }?.let { return it }
+        val key = systemVer.trim()
         return catalog.firstOrNull {
-            UpdateChecker.compareVersionStrings(cleaned, it.patch.ifBlank { it.name }) == 0
+            it.patch == key || it.name == key || it.id == key ||
+                key.startsWith(it.patch) || it.patch.startsWith(key)
         }
     }
 
     fun urlsFor(version: McVersion): List<String> {
-        val slug = version.id.replace('.', '-')
-        val list = mutableListOf<String>()
-        directApk[version.id]?.let { list += it }
-        list += version.downloadUrl
-        list += "https://mcpedl.org/minecraft-pe-$slug-apk/"
-        list += "https://mcpe-planet.com/minecraft-pe-$slug-apk/"
-        return list.distinct()
+        val out = mutableListOf<String>()
+        directApk[version.id]?.let { out += it }
+        directApk[version.patch]?.let { out += it }
+        if (version.downloadUrl.isNotBlank()) out += version.downloadUrl
+        return out.distinct()
     }
 
     fun latestStable(): McVersion? =
-        catalog.filter { it.type == "release" || it.type == "patch" }
-            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
+        catalog.firstOrNull { it.type == "release" }
 
     fun latestBeta(): McVersion? =
-        catalog.filter { it.type == "beta" }
-            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
+        catalog.firstOrNull { it.type == "beta" }
 
     fun latestPatch(): McVersion? =
-        catalog.filter { it.type == "patch" }
-            .maxWithOrNull(compareBy { UpdateChecker.versionKey(it.patch.ifBlank { it.name }) })
+        catalog.firstOrNull { it.type == "patch" }
 }
