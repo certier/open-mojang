@@ -325,6 +325,11 @@ fun ModifyScreen() {
                 }
             }
 
+            OutlinedButton(
+                onClick = { message = editor.createGameOptions() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Create options.txt in Minecraft folder") }
+
             Button(
                 onClick = {
                     if (forceStopFirst) editor.forceStopMinecraft()
