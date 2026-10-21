@@ -8,12 +8,30 @@ data class MsAccount(
     val uuid: String,
     val accessToken: String = "",
     val refreshToken: String = "",
-    val skinUrl: String = ""
+    val skinUrl: String = "",
+    val gamerscore: Int = -1
+)
+
+data class XboxAchievement(
+    val id: String,
+    val name: String,
+    val description: String,
+    val progressState: String,
+    val percentComplete: Int
+)
+
+data class LiveProfile(
+    val gamertag: String,
+    val xuid: String,
+    val gamerscore: Int,
+    val achievements: List<XboxAchievement>,
+    val unlockedCount: Int,
+    val totalCount: Int
 )
 
 /**
  * Lightweight local store for the signed-in Microsoft / Xbox profile.
- * Tokens stay on device only. Real MSAL tokens will be written here after login.
+ * Tokens stay on device only.
  */
 class AccountStore(context: Context) {
 
@@ -29,7 +47,8 @@ class AccountStore(context: Context) {
             uuid = prefs.getString(KEY_UUID, "") ?: "",
             accessToken = prefs.getString(KEY_ACCESS, "") ?: "",
             refreshToken = prefs.getString(KEY_REFRESH, "") ?: "",
-            skinUrl = prefs.getString(KEY_SKIN, "") ?: ""
+            skinUrl = prefs.getString(KEY_SKIN, "") ?: "",
+            gamerscore = prefs.getInt(KEY_GS, -1)
         )
     }
 
@@ -40,6 +59,7 @@ class AccountStore(context: Context) {
             .putString(KEY_ACCESS, account.accessToken)
             .putString(KEY_REFRESH, account.refreshToken)
             .putString(KEY_SKIN, account.skinUrl)
+            .putInt(KEY_GS, account.gamerscore)
             .apply()
     }
 
@@ -53,5 +73,6 @@ class AccountStore(context: Context) {
         private const val KEY_ACCESS = "access"
         private const val KEY_REFRESH = "refresh"
         private const val KEY_SKIN = "skin"
+        private const val KEY_GS = "gamerscore"
     }
 }
