@@ -25,7 +25,8 @@ data class DeviceCodeSession(
 )
 
 /**
- * Microsoft account via device code → Xbox Live.
+ * Microsoft login via login.live.com device code (Xbox client) → Xbox user token → XSTS.
+ * Azure AD v2 consumers endpoint rejects this client id.
  */
 class AuthManager(private val context: Context) {
 
@@ -36,40 +37,39 @@ class AuthManager(private val context: Context) {
         .build()
 
     fun current(): MsAccount? = store.getAccount()
-
     fun isSignedIn(): Boolean = store.isSignedIn()
-
-    fun signOut() {
-        store.clear()
-    }
+    fun signOut() { store.clear() }
 
     suspend fun startDeviceCode(): Result<DeviceCodeSession> = withContext(Dispatchers.IO) {
         try {
             val body = FormBody.Builder()
                 .add("client_id", CLIENT_ID)
                 .add("scope", SCOPE)
+                .add("response_type", "device_code")
                 .build()
             val req = Request.Builder()
-                .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
+                .url("https://login.live.com/oauth20_connect.srf")
                 .post(body)
-                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
                 .build()
             http.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     return@withContext Result.failure(
-                        IllegalStateException("Device code HTTP ${resp.code}: $text")
+                        IllegalStateException("Device code HTTP ${resp.code}: ${text.take(280)}")
                     )
                 }
                 val json = JSONObject(text)
+                if (json.has("error")) {
+                    return@withContext Result.failure(
+                        IllegalStateException(json.optString("error_description", json.getString("error")))
+                    )
+                }
                 Result.success(
                     DeviceCodeSession(
                         userCode = json.getString("user_code"),
                         deviceCode = json.getString("device_code"),
-                        verificationUri = json.optString(
-                            "verification_uri",
-                            "https://www.microsoft.com/link"
-                        ),
+                        verificationUri = json.optString("verification_uri", "https://www.microsoft.com/link"),
                         intervalSec = json.optInt("interval", 5),
                         expiresIn = json.optInt("expires_in", 900)
                     )
@@ -86,56 +86,44 @@ class AuthManager(private val context: Context) {
             var interval = session.intervalSec.coerceAtLeast(3)
             while (System.currentTimeMillis() < deadline) {
                 delay(interval * 1000L)
-                val token = tryPollToken(session.deviceCode)
-                when {
-                    token == null -> continue
-                    token.has("error") -> {
-                        val err = token.getString("error")
-                        when (err) {
-                            "authorization_pending" -> continue
-                            "slow_down" -> {
-                                interval += 2
-                                continue
-                            }
-                            else -> return@withContext Result.failure(
-                                IllegalStateException(token.optString("error_description", err))
-                            )
-                        }
-                    }
-                    else -> {
-                        val access = token.getString("access_token")
-                        val refresh = token.optString("refresh_token", "")
-                        return@withContext finishXbox(access, refresh)
+                val token = tryPollToken(session.deviceCode) ?: continue
+                if (token.has("error")) {
+                    val err = token.getString("error")
+                    when (err) {
+                        "authorization_pending" -> continue
+                        "slow_down" -> { interval += 2; continue }
+                        else -> return@withContext Result.failure(
+                            IllegalStateException(token.optString("error_description", err))
+                        )
                     }
                 }
+                val access = token.optString("access_token", "")
+                if (access.isBlank()) {
+                    return@withContext Result.failure(IllegalStateException("Microsoft returned no access token"))
+                }
+                return@withContext finishXbox(access, token.optString("refresh_token", ""))
             }
-            Result.failure(IllegalStateException("Device login timed out"))
+            Result.failure(IllegalStateException("Timed out. Enter the code at microsoft.com/link and try again."))
         }
 
     fun openVerification(activity: Activity, uri: String) {
+        val target = if (uri.isBlank()) "https://www.microsoft.com/link" else uri
         activity.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
-    }
-
-    suspend fun signIn(activity: Activity): Result<MsAccount> = withContext(Dispatchers.Main) {
-        val session = startDeviceCode().getOrElse {
-            return@withContext Result.failure(it)
-        }
-        openVerification(activity, session.verificationUri)
-        pollDeviceCode(session)
     }
 
     private fun tryPollToken(deviceCode: String): JSONObject? {
         return try {
             val body = FormBody.Builder()
-                .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
                 .add("client_id", CLIENT_ID)
                 .add("device_code", deviceCode)
+                .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
                 .build()
             val req = Request.Builder()
-                .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                .url("https://login.live.com/oauth20_token.srf")
                 .post(body)
+                .header("Accept", "application/json")
                 .build()
             http.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
@@ -147,14 +135,34 @@ class AuthManager(private val context: Context) {
     }
 
     private fun finishXbox(msAccess: String, refresh: String): Result<MsAccount> {
+        val first = xboxChain(msAccess, prefixD = false)
+        if (first.isSuccess) {
+            val account = first.getOrThrow().copy(refreshToken = refresh)
+            store.save(account)
+            return Result.success(account)
+        }
+        val second = xboxChain(msAccess, prefixD = true)
+        if (second.isSuccess) {
+            val account = second.getOrThrow().copy(refreshToken = refresh)
+            store.save(account)
+            return Result.success(account)
+        }
+        return Result.failure(
+            second.exceptionOrNull() ?: first.exceptionOrNull()
+                ?: IllegalStateException("Xbox login failed")
+        )
+    }
+
+    private fun xboxChain(msAccess: String, prefixD: Boolean): Result<MsAccount> {
         return try {
+            val ticket = if (prefixD) "d=$msAccess" else msAccess
             val rpsBody = JSONObject()
                 .put(
                     "Properties",
                     JSONObject()
                         .put("AuthMethod", "RPS")
                         .put("SiteName", "user.auth.xboxlive.com")
-                        .put("RpsTicket", "d=$msAccess")
+                        .put("RpsTicket", ticket)
                 )
                 .put("RelyingParty", "http://auth.xboxlive.com")
                 .put("TokenType", "JWT")
@@ -179,45 +187,54 @@ class AuthManager(private val context: Context) {
                 .put("RelyingParty", "http://xboxlive.com")
                 .put("TokenType", "JWT")
             val xsts = postJson("https://xsts.auth.xboxlive.com/xsts/authorize", xstsBody.toString())
+            if (xsts.has("XErr") && !xsts.has("Token")) {
+                val code = xsts.optLong("XErr")
+                val why = when (code) {
+                    2148916233L -> "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again."
+                    2148916238L -> "Child account needs an adult to allow Xbox."
+                    else -> "Xbox rejected the account (XErr $code)"
+                }
+                return Result.failure(IllegalStateException(why))
+            }
             val xstsToken = xsts.getString("Token")
             val xui = xsts.getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0)
-            val gamertag = xui.optString("gtg", "Player")
-            val xid = xui.optString("xid", "")
-
-            val account = MsAccount(
-                gamertag = gamertag.ifBlank { "Player" },
-                uuid = xid.ifBlank { uhs },
-                accessToken = "XBL3.0 x=$uhs;$xstsToken",
-                refreshToken = refresh,
-                skinUrl = ""
+            val gamertag = xui.optString("gtg", "Player").ifBlank { "Player" }
+            val xid = xui.optString("xid", uhs)
+            Result.success(
+                MsAccount(
+                    gamertag = gamertag,
+                    uuid = xid,
+                    accessToken = "XBL3.0 x=$uhs;$xstsToken",
+                    refreshToken = "",
+                    skinUrl = ""
+                )
             )
-            store.save(account)
-            Result.success(account)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     private fun postJson(url: String, json: String): JSONObject {
-        val media = "application/json".toMediaType()
+        val media = "application/json; charset=utf-8".toMediaType()
         val req = Request.Builder()
             .url(url)
             .post(json.toRequestBody(media))
-            .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .header("x-xbl-contract-version", "1")
             .build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                throw IllegalStateException("HTTP ${resp.code}: $text")
+            if (text.isBlank()) throw IllegalStateException("Empty response from $url (${resp.code})")
+            val jsonOut = JSONObject(text)
+            if (!resp.isSuccessful && !jsonOut.has("XErr")) {
+                throw IllegalStateException("HTTP ${resp.code}: ${text.take(300)}")
             }
-            return JSONObject(text)
+            return jsonOut
         }
     }
 
     companion object {
         const val CLIENT_ID = "00000000402b5328"
-        const val SCOPE = "XboxLive.signin offline_access"
+        const val SCOPE = "service::user.auth.xboxlive.com::MBI_SSL"
     }
 }
