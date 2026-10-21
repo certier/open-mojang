@@ -79,7 +79,6 @@ class DownloadEngine(private val context: Context) {
             file.inputStream().use { ins ->
                 val magic = ByteArray(4)
                 if (ins.read(magic) != 4) return false
-                // ZIP / APK local file header PK\x03\x04
                 magic[0] == 0x50.toByte() && magic[1] == 0x4b.toByte()
             }
         } catch (_: Exception) {
@@ -157,7 +156,8 @@ class DownloadEngine(private val context: Context) {
                 throw IllegalStateException("HTTP ${response.code} for APK")
             }
             val body = response.body ?: throw IllegalStateException("Empty body")
-            val total = body.contentLength().let { if (it > 0) it else expectedSizeMb.toLong() * 1024L * 1024L }
+            val rawLen = body.contentLength()
+            val total = if (rawLen >= 8L * 1024L * 1024L) rawLen else -1L
             var read = 0L
             var lastUi = 0L
             var lastBytes = 0L
