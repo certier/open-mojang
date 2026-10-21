@@ -54,6 +54,10 @@ class SettingsStore(private val context: Context) {
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
 
+    var setupComplete: Boolean
+        get() = prefs.getBoolean(KEY_SETUP, false)
+        set(value) = prefs.edit().putBoolean(KEY_SETUP, value).apply()
+
     /** Alias used by older DownloadEngine call sites */
     var wifiOnlyDownloads: Boolean
         get() = wifiOnly
@@ -87,5 +91,6 @@ class SettingsStore(private val context: Context) {
         private const val KEY_THEME = "theme"
         private const val KEY_INSTALL_AFTER = "install_after"
         private const val KEY_WIFI_ONLY = "wifi_only"
+        private const val KEY_SETUP = "setup_done"
     }
 }
