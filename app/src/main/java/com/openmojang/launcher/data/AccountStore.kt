@@ -17,22 +17,21 @@ data class XboxAchievement(
     val name: String,
     val description: String,
     val progressState: String,
-    val percentComplete: Int
+    val percentComplete: Int,
+    val iconUrl: String = "",
+    val rarity: String = ""
 )
 
 data class LiveProfile(
     val gamertag: String,
     val xuid: String,
     val gamerscore: Int,
+    val avatarUrl: String = "",
     val achievements: List<XboxAchievement>,
     val unlockedCount: Int,
     val totalCount: Int
 )
 
-/**
- * Lightweight local store for the signed-in Microsoft / Xbox profile.
- * Tokens stay on device only.
- */
 class AccountStore(context: Context) {
 
     private val prefs: SharedPreferences =
