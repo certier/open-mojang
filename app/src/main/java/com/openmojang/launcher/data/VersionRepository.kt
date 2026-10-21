@@ -1,8 +1,5 @@
 package com.openmojang.launcher.data
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
 data class McVersion(
     val id: String,
     val name: String,
@@ -150,9 +147,7 @@ class VersionRepository {
         )
     )
 
-    suspend fun getVersions(): List<McVersion> = withContext(Dispatchers.IO) {
-        catalog
-    }
+    fun getVersions(): List<McVersion> = catalog
 
     fun findByInstalled(systemVer: String?): McVersion? {
         if (systemVer.isNullOrBlank()) return null
