@@ -1,6 +1,9 @@
 package com.openmojang.launcher.ui.screens
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,6 +47,14 @@ fun AccountScreen(onBack: () -> Unit) {
             ?: t.toString()
         loading = false
         session = null
+    }
+
+    fun copyCode(code: String) {
+        runCatching {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Microsoft login code", code))
+            status = "Code $code copied — paste at microsoft.com/link"
+        }
     }
 
     fun refreshProfile(acc: MsAccount) {
@@ -241,9 +252,12 @@ fun AccountScreen(onBack: () -> Unit) {
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = {
-                        (context as? Activity)?.let { auth.openVerification(it, s.verificationUri) }
-                    }) { Text("Open microsoft.com/link") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { copyCode(s.userCode) }) { Text("Copy code") }
+                        Button(onClick = {
+                            (context as? Activity)?.let { auth.openVerification(it, s.verificationUri) }
+                        }) { Text("Open link") }
+                    }
                     if (loading) {
                         Spacer(Modifier.height(12.dp))
                         CircularProgressIndicator()
@@ -254,9 +268,11 @@ fun AccountScreen(onBack: () -> Unit) {
                             scope.launch {
                                 loading = true
                                 error = null
+                                status = null
                                 auth.startDeviceCode()
                                     .onSuccess { s ->
                                         session = s
+                                        copyCode(s.userCode)
                                         (context as? Activity)?.let {
                                             auth.openVerification(it, s.verificationUri)
                                         }
@@ -274,6 +290,10 @@ fun AccountScreen(onBack: () -> Unit) {
                         },
                         enabled = !loading
                     ) { Text(if (loading) "Starting…" else "Sign in with Microsoft") }
+                }
+                status?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
                 error?.let {
                     Spacer(Modifier.height(16.dp))
