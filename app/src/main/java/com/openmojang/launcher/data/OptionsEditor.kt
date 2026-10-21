@@ -13,11 +13,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * Reads and writes Minecraft Bedrock options.txt.
- * Auto-finds the file when All files access is granted.
- * saveBest merges keys so unrelated settings are never wiped.
- */
 class OptionsEditor(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("options_editor", Context.MODE_PRIVATE)
@@ -130,7 +125,7 @@ class OptionsEditor(private val context: Context) {
         for (f in targets) {
             try {
                 if (f.isFile && f.canRead()) {
-                    loadFromFile(f)?.let { return f.absolutePath to it }
+                    loadFromFile(f)?.let { return f.absolutePath to defaults }
                 }
                 f.parentFile?.mkdirs()
                 if (saveToFile(f, defaults)) return f.absolutePath to defaults
@@ -251,8 +246,13 @@ class OptionsEditor(private val context: Context) {
             val pm = context.packageManager
             val pi = pm.getPackageInfo(MC_PACKAGE, 0)
             val ver = pi.versionName ?: "?"
-            val code = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
-            val src = try { pi.applicationInfo.sourceDir } catch (_: Exception) { "?" }
+            val code = if (Build.VERSION.SDK_INT >= 28) {
+                pi.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pi.versionCode.toLong()
+            }
+            val src = try { pi.applicationInfo?.sourceDir ?: "?" } catch (_: Exception) { "?" }
             "Minecraft $ver ($code)\n$src"
         } catch (_: Exception) {
             "Minecraft not installed"
