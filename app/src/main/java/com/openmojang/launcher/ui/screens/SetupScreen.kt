@@ -22,7 +22,9 @@ fun SetupScreen(onFinished: () -> Unit) {
     val context = LocalContext.current
     val editor = remember { OptionsEditor(context) }
     var notes by remember {
-        mutableStateOf("Allow these once. Maple needs them to download, install, and write options.txt.")
+        mutableStateOf(
+            "Three permissions, one time. 1) Notifications for download progress. 2) Install unknown apps. 3) All files access so options.txt and skins land in the real Minecraft folder."
+        )
     }
     var filesOn by remember { mutableStateOf(editor.hasFullStorageAccess()) }
 
@@ -54,7 +56,7 @@ fun SetupScreen(onFinished: () -> Unit) {
                 }
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Allow download notifications") }
+        ) { Text("1 · Allow download notifications") }
 
         OutlinedButton(
             onClick = {
@@ -66,15 +68,15 @@ fun SetupScreen(onFinished: () -> Unit) {
                     .onFailure { notes = "Open Settings → Apps → Maple → Install unknown apps" }
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Allow install from this app") }
+        ) { Text("2 · Allow install from this app") }
 
         OutlinedButton(
             onClick = {
                 editor.openAllFilesSettings()
-                notes = "Turn on All files access, come back, then tap Check storage"
+                notes = "Turn on All files access, come back, then tap step 3 check"
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text(if (filesOn) "All files access is on" else "Allow all files access") }
+        ) { Text(if (filesOn) "3 · All files access is on" else "3 · Allow all files access") }
 
         TextButton(
             onClick = {
@@ -85,9 +87,9 @@ fun SetupScreen(onFinished: () -> Unit) {
         ) { Text("Check storage and create options.txt") }
 
         Spacer(Modifier.height(8.dp))
-        Button(onClick = onFinished, modifier = Modifier.fillMaxWidth()) { Text("Continue") }
+        Button(onClick = onFinished, modifier = Modifier.fillMaxWidth()) { Text("Done — open Maple") }
         Text(
-            "This screen shows once. You can still change things later in Modify and Settings.",
+            "This screen shows once. Change later in Modify and Settings.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
