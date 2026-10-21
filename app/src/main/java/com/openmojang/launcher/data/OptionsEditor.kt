@@ -16,6 +16,7 @@ import java.util.Locale
 /**
  * Reads and writes Minecraft Bedrock options.txt.
  * Auto-finds the file when All files access is granted — no picker required.
+ * Creates options.txt with defaults when none exists.
  */
 class OptionsEditor(private val context: Context) {
 
@@ -68,7 +69,6 @@ class OptionsEditor(private val context: Context) {
                 val f = File(root, rel)
                 if (f.isFile) out += f
             }
-            // Deep walk when All files access is granted
             if (hasFullStorageAccess()) {
                 try {
                     val games = File(root, "games/com.mojang")
@@ -107,6 +107,59 @@ class OptionsEditor(private val context: Context) {
         }
     }
 
+    fun preferredGameOptionsFile(): File {
+        val root = Environment.getExternalStorageDirectory()
+            ?: File("/storage/emulated/0")
+        return File(root, "games/com.mojang/minecraftpe/options.txt")
+    }
+
+    fun defaultOptions(): Map<String, String> = linkedMapOf(
+        "gfx_viewdistance" to "192",
+        "gfx_field_of_view" to "60",
+        "gfx_gamma" to "0.50",
+        "gfx_fancygraphics" to "1",
+        "gfx_smoothlighting" to "1",
+        "gfx_fancyskies" to "1",
+        "gfx_viewbobbing" to "1",
+        "gfx_async_texture_loads" to "1",
+        "gfx_msaa" to "2",
+        "gfx_max_framerate" to "0",
+        "gfx_vsync" to "0",
+        "gfx_multithreaded_renderer" to "1",
+        "gfx_particleviewdistance" to "100",
+        "gfx_graphics_api" to "0",
+        "graphics_api" to "default",
+        "preferred_graphics_backend" to "default",
+        "gfx_prefer_vulkan" to "0"
+    )
+
+    fun ensureOptionsFile(): Pair<String, Map<String, String>>? {
+        val defaults = defaultOptions()
+        val targets = mutableListOf<File>()
+        if (hasFullStorageAccess()) {
+            targets += preferredGameOptionsFile()
+            targets += File(
+                Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0"),
+                "Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftpe/options.txt"
+            )
+        }
+        targets += File(context.getExternalFilesDir(null), "minecraftpe/options.txt")
+
+        for (f in targets) {
+            try {
+                if (f.isFile && f.canRead()) {
+                    loadFromFile(f)?.let { return f.absolutePath to it }
+                }
+                f.parentFile?.mkdirs()
+                if (saveToFile(f, defaults)) {
+                    return f.absolutePath to defaults
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
     fun loadBest(): Pair<String, Map<String, String>>? {
         pickedUri?.let { uri ->
             loadFromUri(uri)?.let { return "SAF" to it }
@@ -114,7 +167,7 @@ class OptionsEditor(private val context: Context) {
         for (f in candidateFiles()) {
             loadFromFile(f)?.let { return f.absolutePath to it }
         }
-        return null
+        return ensureOptionsFile()
     }
 
     fun saveToFile(file: File, options: Map<String, String>): Boolean {
@@ -143,13 +196,19 @@ class OptionsEditor(private val context: Context) {
             if (saveToUri(uri, options)) return "Saved via file access"
         }
         for (f in candidateFiles()) {
-            if (f.canWrite() && saveToFile(f, options)) {
+            if ((f.canWrite() || !f.exists()) && saveToFile(f, options)) {
                 return "Saved to ${f.absolutePath}"
+            }
+        }
+        if (hasFullStorageAccess()) {
+            val game = preferredGameOptionsFile()
+            if (saveToFile(game, options)) {
+                return "Created and saved ${game.absolutePath}"
             }
         }
         val mirror = File(context.getExternalFilesDir(null), "minecraftpe/options.txt")
         if (saveToFile(mirror, options)) {
-            return "Saved mirror: ${mirror.absolutePath} (copy into Minecraft folder if needed)"
+            return "Saved mirror: ${mirror.absolutePath} (grant All files access to write into Minecraft folder)"
         }
         return null
     }
