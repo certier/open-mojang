@@ -173,11 +173,34 @@ class OptionsEditor(private val context: Context) {
     fun saveToFile(file: File, options: Map<String, String>): Boolean {
         return try {
             val text = serialize(options)
-            file.parentFile?.mkdirs()
+            if (file.parentFile?.exists() != true) file.parentFile?.mkdirs()
             file.writeText(text)
-            true
+            file.isFile && file.length() >= text.length.toLong().coerceAtLeast(8)
         } catch (_: Exception) {
             false
+        }
+    }
+
+    fun createGameOptions(): String {
+        if (!hasFullStorageAccess()) {
+            return "All files access is off. Grant it on the setup screen, then tap Create."
+        }
+        val file = preferredGameOptionsFile()
+        return try {
+            val dir = file.parentFile
+            if (dir != null && !dir.exists() && !dir.mkdirs() && !dir.isDirectory) {
+                return "Could not create folder ${dir.absolutePath}"
+            }
+            if (!file.isFile || file.length() < 8) {
+                file.writeText(serialize(defaultOptions()))
+            }
+            if (!file.isFile || file.readText().isBlank()) {
+                "Write did not stick at ${file.absolutePath}"
+            } else {
+                "options.txt · ${file.length()} bytes · ${file.absolutePath}"
+            }
+        } catch (e: Exception) {
+            "Write failed: ${e.javaClass.simpleName}: ${e.message ?: "no detail"}"
         }
     }
 
